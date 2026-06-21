@@ -10,6 +10,7 @@ import {
   JiraIntegrationCard,
   LinearIntegrationCard
 } from '@/components/settings/task-tracker-integration-cards'
+import { IntegrationCardPresentationProvider } from '@/components/settings/integration-card-presentation'
 import { useIntegrationProviderStatusRefresh } from '@/components/settings/use-integration-provider-status-refresh'
 import { IntegrationStep } from './connect-integration-step'
 import {
@@ -91,90 +92,92 @@ export function ConnectIntegrationsList(): React.JSX.Element {
   const taskExpanded = taskToggleCurrent ? taskToggle.expanded : reviewDone && !trackerDone
 
   return (
-    <div className="space-y-2.5">
-      <IntegrationStep
-        index={0}
-        state={flow.review}
-        expanded={reviewExpanded}
-        title={translate(
-          'auto.components.feature.wall.ConnectIntegrationsList.review_step_title',
-          'See PR status while agents work'
-        )}
-        description={translate(
-          'auto.components.feature.wall.ConnectIntegrationsList.review_step_description',
-          'Connect a review provider so Orca can show PR or MR status, checks, and reviews.'
-        )}
-        summary={
-          <>
-            <span className="font-semibold text-foreground">{status.reviewProviderName}</span>{' '}
-            {translate(
-              'auto.components.feature.wall.ConnectIntegrationsList.5b3577a492',
-              'connected for review status'
-            )}
-          </>
-        }
-        onToggle={() => setReviewReopened((value) => !value)}
-        canToggle={reviewCanToggle}
-      >
-        <GitHubIntegrationCard />
-        <GitLabIntegrationCard />
-        <BitbucketIntegrationCard />
-        <AzureDevOpsIntegrationCard />
-        <GiteaIntegrationCard />
-      </IntegrationStep>
-
-      <IntegrationStep
-        index={1}
-        state={flow.task}
-        expanded={taskExpanded}
-        title={translate(
-          'auto.components.feature.wall.ConnectIntegrationsList.task_step_title',
-          'Start agents on your tasks without leaving Orca'
-        )}
-        description={translate(
-          'auto.components.feature.wall.ConnectIntegrationsList.33b650af52',
-          'Connect where your team tracks work. Orca starts workspaces with the issue title, link, and context already attached.'
-        )}
-        summary={
-          status.trackerProviderName ? (
-            <>
-              <TaskSourceNameList names={status.taskSourceNames} />{' '}
-              {translate(
-                'auto.components.feature.wall.ConnectIntegrationsList.3dddb2d565',
-                'connected for tasks'
-              )}
-            </>
-          ) : (
-            <>
-              <span className="font-semibold text-foreground">
-                {status.codeHostTaskProviderName}
-              </span>{' '}
-              {translate(
-                'auto.components.feature.wall.ConnectIntegrationsList.code_host_tasks_summary',
-                'issues available as tasks · add Linear or Jira if your team plans work there'
-              )}
-            </>
-          )
-        }
-        onToggle={() =>
-          setTaskToggle({
-            expanded: !taskExpanded,
-            whenTrackerDone: trackerDone,
-            whenReviewDone: reviewDone
-          })
-        }
-      >
-        <LinearIntegrationCard />
-        <JiraIntegrationCard />
-        <p className="px-1 pt-1 text-[12px] leading-snug text-muted-foreground">
-          {translate(
-            'auto.components.feature.wall.ConnectIntegrationsList.code_host_tasks_caption',
-            "Your code host's issues also work as tasks."
+    <IntegrationCardPresentationProvider value="setup-guide">
+      <div className="space-y-2.5">
+        <IntegrationStep
+          index={0}
+          state={flow.review}
+          expanded={reviewExpanded}
+          title={translate(
+            'auto.components.feature.wall.ConnectIntegrationsList.review_step_title',
+            'See PR status while agents work'
           )}
-        </p>
-        <GitHubIntegrationCard />
-        <GitLabIntegrationCard />
-      </IntegrationStep>
-    </div>
+          description={translate(
+            'auto.components.feature.wall.ConnectIntegrationsList.review_step_description',
+            'Connect a review provider so Orca can show PR or MR status, checks, and reviews.'
+          )}
+          summary={
+            <>
+              <span className="font-semibold text-foreground">{status.reviewProviderName}</span>{' '}
+              {translate(
+                'auto.components.feature.wall.ConnectIntegrationsList.5b3577a492',
+                'connected for review status'
+              )}
+            </>
+          }
+          onToggle={() => setReviewReopened((value) => !value)}
+          canToggle={reviewCanToggle}
+        >
+          <GitHubIntegrationCard />
+          <GitLabIntegrationCard />
+          <BitbucketIntegrationCard />
+          <AzureDevOpsIntegrationCard />
+          <GiteaIntegrationCard />
+        </IntegrationStep>
+
+        <IntegrationStep
+          index={1}
+          state={flow.task}
+          expanded={taskExpanded}
+          title={translate(
+            'auto.components.feature.wall.ConnectIntegrationsList.task_step_title',
+            'Start agents on your tasks without leaving Orca'
+          )}
+          description={translate(
+            'auto.components.feature.wall.ConnectIntegrationsList.33b650af52',
+            'Connect where your team tracks work. Orca starts workspaces with the issue title, link, and context already attached.'
+          )}
+          summary={
+            status.trackerProviderName ? (
+              <>
+                <TaskSourceNameList names={status.taskSourceNames} />{' '}
+                {translate(
+                  'auto.components.feature.wall.ConnectIntegrationsList.3dddb2d565',
+                  'connected for tasks'
+                )}
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-foreground">
+                  {status.codeHostTaskProviderName}
+                </span>{' '}
+                {translate(
+                  'auto.components.feature.wall.ConnectIntegrationsList.code_host_tasks_summary',
+                  'issues available as tasks · add Linear or Jira if your team plans work there'
+                )}
+              </>
+            )
+          }
+          onToggle={() =>
+            setTaskToggle({
+              expanded: !taskExpanded,
+              whenTrackerDone: trackerDone,
+              whenReviewDone: reviewDone
+            })
+          }
+        >
+          <LinearIntegrationCard />
+          <JiraIntegrationCard />
+          <p className="px-1 pt-1 text-[12px] leading-snug text-muted-foreground">
+            {translate(
+              'auto.components.feature.wall.ConnectIntegrationsList.code_host_tasks_caption',
+              "Your code host's issues also work as tasks."
+            )}
+          </p>
+          <GitHubIntegrationCard />
+          <GitLabIntegrationCard />
+        </IntegrationStep>
+      </div>
+    </IntegrationCardPresentationProvider>
   )
 }

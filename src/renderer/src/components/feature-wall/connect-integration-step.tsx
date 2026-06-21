@@ -29,74 +29,6 @@ export function IntegrationStep(props: {
   // prerequisite, so a Linear/Jira-first user can connect tasks right away.
   const canToggle = !active && (props.canToggle ?? true)
 
-  const header = (
-    <button
-      type="button"
-      onClick={canToggle ? onToggle : undefined}
-      disabled={!canToggle}
-      aria-current={active ? 'step' : undefined}
-      aria-expanded={canToggle ? expanded : undefined}
-      className={cn(
-        'flex w-full items-center gap-3 px-4 py-3.5 text-left',
-        expanded ? 'rounded-xl bg-card' : null,
-        canToggle ? 'hover:bg-accent/50' : 'cursor-default'
-      )}
-    >
-      <span
-        className={cn(
-          'flex size-7 shrink-0 items-center justify-center rounded-full border text-[13px] font-semibold leading-none',
-          done
-            ? 'border-status-success-border bg-status-success-background text-status-success'
-            : active
-              ? 'border-foreground bg-foreground text-background'
-              : 'border-border text-muted-foreground'
-        )}
-      >
-        {done ? <Check className="size-3.5" /> : props.index + 1}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-[15px] font-semibold leading-tight text-foreground">
-          {props.title}
-        </span>
-        <span className="mt-0.5 block text-[13px] leading-snug text-muted-foreground">
-          {done ? props.summary : props.description}
-        </span>
-      </span>
-      {canToggle ? (
-        <span className="shrink-0 text-[12px] font-medium text-muted-foreground">
-          {done
-            ? expanded
-              ? translate(
-                  'auto.components.feature.wall.connect.integration.step.5538eb6743',
-                  'Done'
-                )
-              : translate(
-                  'auto.components.feature.wall.connect.integration.step.0f47ff17c6',
-                  'Change'
-                )
-            : expanded
-              ? translate(
-                  'auto.components.feature.wall.connect.integration.step.close_step',
-                  'Close'
-                )
-              : translate(
-                  'auto.components.feature.wall.connect.integration.step.open_step',
-                  'Open'
-                )}
-        </span>
-      ) : null}
-    </button>
-  )
-
-  if (expanded) {
-    return (
-      <div className="space-y-2">
-        {header}
-        {props.children}
-      </div>
-    )
-  }
-
   return (
     <div
       className={cn(
@@ -104,7 +36,64 @@ export function IntegrationStep(props: {
         active || (done && expanded) ? 'border-foreground/25 shadow-xs' : 'border-border'
       )}
     >
-      {header}
+      <button
+        type="button"
+        onClick={canToggle ? onToggle : undefined}
+        disabled={!canToggle}
+        aria-current={active ? 'step' : undefined}
+        aria-expanded={canToggle ? expanded : undefined}
+        className={cn(
+          'flex w-full items-center gap-3 px-4 py-3.5 text-left',
+          canToggle ? 'hover:bg-accent/50' : 'cursor-default'
+        )}
+      >
+        <span
+          className={cn(
+            'flex size-7 shrink-0 items-center justify-center rounded-full border text-[13px] font-semibold leading-none',
+            done
+              ? 'border-status-success-border bg-status-success-background text-status-success'
+              : active
+                ? 'border-foreground bg-foreground text-background'
+                : 'border-border text-muted-foreground'
+          )}
+        >
+          {done ? <Check className="size-3.5" /> : props.index + 1}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-semibold leading-tight text-foreground">
+            {props.title}
+          </span>
+          <span className="mt-0.5 block text-[13px] leading-snug text-muted-foreground">
+            {done ? props.summary : props.description}
+          </span>
+        </span>
+        {canToggle ? (
+          <span className="shrink-0 text-[12px] font-medium text-muted-foreground">
+            {done
+              ? expanded
+                ? translate(
+                    'auto.components.feature.wall.connect.integration.step.5538eb6743',
+                    'Done'
+                  )
+                : translate(
+                    'auto.components.feature.wall.connect.integration.step.0f47ff17c6',
+                    'Change'
+                  )
+              : expanded
+                ? translate(
+                    'auto.components.feature.wall.connect.integration.step.close_step',
+                    'Close'
+                  )
+                : translate(
+                    'auto.components.feature.wall.connect.integration.step.open_step',
+                    'Open'
+                  )}
+          </span>
+        ) : null}
+      </button>
+      {expanded ? (
+        <div className="space-y-2 border-t border-border bg-card p-3">{props.children}</div>
+      ) : null}
     </div>
   )
 }
