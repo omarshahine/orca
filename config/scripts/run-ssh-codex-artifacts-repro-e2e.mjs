@@ -12,6 +12,9 @@ const runtime = spawnSync(pnpm, ['run', 'ensure:electron-runtime'], {
   env
 })
 
+if (runtime.error) {
+  throw runtime.error
+}
 if (runtime.status !== 0) {
   process.exit(runtime.status ?? 1)
 }
@@ -36,4 +39,7 @@ const result = spawnSync(
   }
 )
 
+if (result.error) {
+  throw result.error
+}
 process.exit(result.status ?? 1)

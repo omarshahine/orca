@@ -87,6 +87,9 @@ async function readActiveTerminalRasterTarget(page: Page): Promise<TerminalRaste
       ?.getRenderingDiagnostics()
       .find((diagnostic) => diagnostic.paneId === pane.id)
     const rect = screen.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) {
+      throw new Error('Active terminal screen is not visible for raster capture')
+    }
     const activeBuffer = pane.terminal.buffer.active
     const modelGrayRows: number[] = []
     const modelStatusRows: number[] = []
@@ -154,7 +157,9 @@ function analyzeGraySlabs(
   const originY = Math.round(target.clip.y * scaleY)
   const maxX = Math.min(image.width, originX + Math.round(target.clip.width * scaleX))
   const maxY = Math.min(image.height, originY + Math.round(target.clip.height * scaleY))
+  // Tuned to ignore short gray fragments while still catching replay slab bands.
   const minRunWidth = Math.max(32, Math.round(target.cellWidth * scaleX * 14))
+  // Require multi-pixel vertical continuity to avoid one-line anti-alias noise.
   const minRunHeight = Math.max(4, Math.round(target.cellHeight * scaleY * 0.35))
   const runs: GraySlab[] = []
 
@@ -236,6 +241,7 @@ function analyzeGraySlabs(
     }
     if (
       row >= 8 &&
+      // Thresholds tuned to classify stale Codex status glyph rows in screenshots.
       cyanPixelCount >= Math.max(12, Math.round(target.cellWidth * scaleX * 3)) &&
       greenPixelCount >= Math.max(24, Math.round(target.cellWidth * scaleX * 8)) &&
       !target.modelStatusRows.some((statusRow) => Math.abs(statusRow - row) <= 1)
@@ -274,26 +280,4 @@ export async function captureGraySlabAnalysis(page: Page): Promise<{
     analysis,
     screenshot
   }
-}
-
-export async function resetWebglAndCaptureGraySlabAnalysis(page: Page): Promise<{
-  analysis: GraySlabAnalysis
-  screenshot: Buffer
-}> {
-  await page.evaluate(() => {
-    const state = window.__store?.getState()
-    const worktreeId = state?.activeWorktreeId
-    const tabId =
-      state?.activeTabType === 'terminal'
-        ? state.activeTabId
-        : worktreeId
-          ? (state?.activeTabIdByWorktree?.[worktreeId] ?? null)
-          : null
-    const manager = tabId ? window.__paneManagers?.get(tabId) : null
-    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
-    manager?.resetWebglTextureAtlases?.()
-    pane?.terminal?.refresh?.(0, Math.max(0, (pane.terminal.rows ?? 1) - 1))
-  })
-  await page.waitForTimeout(250)
-  return captureGraySlabAnalysis(page)
 }

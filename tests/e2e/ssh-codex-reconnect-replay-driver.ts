@@ -138,19 +138,25 @@ export async function installPtyReplayProbe(page: Page): Promise<void> {
 }
 
 export async function waitForDockerRemoteReconnected(page: Page, targetId: string): Promise<void> {
+  let observedNonConnected = false
   await expect
     .poll(
-      async () =>
-        page.evaluate((targetId) => {
+      async () => {
+        const status = await page.evaluate((targetId) => {
           const state = window.__store?.getState().sshConnectionStates.get(targetId)
           return state?.status ?? null
-        }, targetId),
+        }, targetId)
+        if (status !== 'connected') {
+          observedNonConnected = true
+        }
+        return observedNonConnected && status === 'connected'
+      },
       {
         timeout: 90_000,
         message: 'Docker SSH target did not auto-reconnect after transport drop'
       }
     )
-    .toBe('connected')
+    .toBe(true)
 }
 
 export async function readReplayProbeSnapshot(page: Page): Promise<Record<string, unknown>> {

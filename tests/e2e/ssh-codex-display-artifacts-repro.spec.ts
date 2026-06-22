@@ -42,12 +42,9 @@ import {
   waitForRealRemoteCodexCompletion,
   waitForRemoteFixtureCleanFinalInHiddenPane
 } from './ssh-codex-terminal-observers'
-import {
-  MAX_FINAL_GRAY_SLABS,
-  captureGraySlabAnalysis,
-  resetWebglAndCaptureGraySlabAnalysis
-} from './terminal-raster-artifact-analysis'
+import { MAX_FINAL_GRAY_SLABS, captureGraySlabAnalysis } from './terminal-raster-artifact-analysis'
 import { persistReproEvidence } from './terminal-repro-evidence'
+import { resetWebglAndCaptureGraySlabAnalysis } from './terminal-webgl-reset-capture'
 
 const RUN_DOCKER_SSH = process.env.ORCA_E2E_SSH_DOCKER === '1'
 const RUN_REAL_REMOTE_CODEX = process.env.ORCA_E2E_REAL_REMOTE_CODEX === '1'
@@ -174,6 +171,8 @@ test.describe('Remote SSH Codex display artifacts repro', () => {
         description: JSON.stringify(resetEvidence.analysis)
       })
 
+      // Why: this spec supports both repro mode and strict regression mode so
+      // the same harness can prove a failure and lock the fixed behavior.
       if (EXPECT_NO_ARTIFACTS) {
         expect(analysis.slabCount).toBeLessThanOrEqual(MAX_FINAL_GRAY_SLABS)
         expect(analysis.staleStatusGlyphRowCount).toBe(0)

@@ -6,10 +6,16 @@ export const REMOTE_TUI_DONE = 'ORCA_REMOTE_CODEX_ARTIFACT_TUI_DONE'
 export const REMOTE_CODEX_FIXTURE_CLEAN_FINAL_TEXT =
   'Any gray slab visible now is stale renderer state.'
 const REMOTE_TUI_FRAMES = 900
-const REMOTE_CODEX_FIXTURE_FRAMES = Number(process.env.ORCA_E2E_CODEX_FIXTURE_FRAMES ?? '34')
-const REMOTE_CODEX_FIXTURE_FRAME_DELAY_MS = Number(
-  process.env.ORCA_E2E_CODEX_FIXTURE_FRAME_DELAY_MS ?? '45'
+const REMOTE_CODEX_FIXTURE_FRAMES = parseEnvNumber(process.env.ORCA_E2E_CODEX_FIXTURE_FRAMES, 34)
+const REMOTE_CODEX_FIXTURE_FRAME_DELAY_MS = parseEnvNumber(
+  process.env.ORCA_E2E_CODEX_FIXTURE_FRAME_DELAY_MS,
+  45
 )
+
+function parseEnvNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
 
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
