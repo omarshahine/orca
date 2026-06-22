@@ -38,6 +38,7 @@ function createPane(): ManagedPaneInternal {
     stablePaneId: leafId,
     terminal: {
       loadAddon: vi.fn(),
+      attachCustomWheelEventHandler: vi.fn(),
       refresh: vi.fn(),
       rows: 24
     } as never,
@@ -389,6 +390,7 @@ describe('openTerminal — Unicode 11 ordering', () => {
           events.push('loadAddon:webLinks')
         }
       }),
+      attachCustomWheelEventHandler: vi.fn(),
       write: vi.fn(() => {
         events.push('write')
       }),

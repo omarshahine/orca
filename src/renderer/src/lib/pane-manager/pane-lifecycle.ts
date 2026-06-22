@@ -25,6 +25,7 @@ import {
 import { clearPendingSplitScrollRestore } from './pane-split-scroll'
 import { buildDefaultTerminalOptions } from './pane-terminal-options'
 import { activateOrcaTerminalUnicodeProvider } from './pane-terminal-unicode-provider'
+import { attachTerminalMouseWheelMultiplier } from './pane-terminal-mouse-wheel'
 import { attachDomRendererFocusClassSync } from './pane-dom-focus-class-sync'
 import {
   ENABLE_WEBGL_RENDERER,
@@ -197,6 +198,7 @@ export function openTerminal(pane: ManagedPaneInternal): void {
   terminal.loadAddon(serializeAddon)
   terminal.loadAddon(unicode11Addon)
   terminal.loadAddon(webLinksAddon)
+  attachTerminalMouseWheelMultiplier(terminal)
 
   // Activate Orca's Unicode 11 width shim *before* any caller-driven write. CJK / emoji /
   // ZWJ codepoints get baked into the buffer at the active unicode version on
