@@ -340,7 +340,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       isVisible: true
     })
 
-    expect(mocks.requestTerminalBacklogRecovery).not.toHaveBeenCalled()
+    expect(mocks.requestTerminalBacklogRecovery).toHaveBeenCalledWith(terminal)
     expect(mocks.flushTerminalOutput).not.toHaveBeenCalled()
     expect(manager.resumeRendering).not.toHaveBeenCalled()
     expect(mocks.fitAndFocusPanes).not.toHaveBeenCalled()

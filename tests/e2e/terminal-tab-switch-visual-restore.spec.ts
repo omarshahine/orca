@@ -14,7 +14,11 @@ import {
   waitForActiveWorktree,
   waitForSessionReady
 } from './helpers/store'
-import { sendToTerminal, waitForActiveTerminalManager } from './helpers/terminal'
+import {
+  getTerminalContent,
+  sendToTerminal,
+  waitForActiveTerminalManager
+} from './helpers/terminal'
 
 const SILENT_FOREGROUND_COMMAND = 'node -e "setInterval(() => {}, 1000)"\r'
 const TAB_A_GLYPH_ROW = 'abcdefghijklmnopqrstuvwxyz 0123456789 []{}<>/\\#@%&*+=~'
@@ -48,6 +52,30 @@ type SchedulerDebugWindow = Window & {
   __terminalOutputSchedulerDebug?: {
     reset: () => void
     snapshot: () => TerminalOutputSchedulerSnapshot
+  }
+}
+
+type HiddenOutputDebugSnapshot = {
+  hiddenRendererSkipCount: number
+  hiddenRendererSkippedChars: number
+  hiddenRendererMode2031ReplyCount: number
+}
+
+type HiddenOutputRecoveryWindow = Window & {
+  __terminalPtyDataInjection?: {
+    inject: (paneKey: string, data: string, meta?: { seq?: number; rawLength?: number }) => boolean
+  }
+  __terminalPtyOutputDebug?: {
+    reset: () => void
+    snapshot: () => HiddenOutputDebugSnapshot
+  }
+  __terminalHiddenSnapshotOverride?: {
+    setPending: (
+      ptyId: string,
+      snapshot: { data: string; cols: number; rows: number; seq?: number }
+    ) => void
+    resolve: (ptyId: string) => void
+    clear: (ptyId: string) => void
   }
 }
 
@@ -103,6 +131,32 @@ async function ensureTwoTerminalTabs(
     throw new Error('Expected a second terminal tab')
   }
   return { firstTabId, secondTabId }
+}
+
+async function createCodexMarkedTerminalTab(page: Page): Promise<string> {
+  const worktreeId = (await getActiveWorktreeId(page))!
+  return page.evaluate((worktreeId) => {
+    const store = window.__store
+    if (!store) {
+      throw new Error('Store unavailable')
+    }
+    const state = store.getState()
+    const tab = state.createTab(worktreeId, undefined, undefined, {
+      launchAgent: 'codex'
+    })
+    state.queueTabStartupCommand(tab.id, {
+      command: 'node -e "setInterval(() => {}, 1000)"',
+      launchAgent: 'codex',
+      telemetry: {
+        agent_kind: 'codex',
+        launch_source: 'tab_bar_quick_launch',
+        request_kind: 'new'
+      }
+    })
+    state.setActiveTab(tab.id)
+    state.setActiveTabType('terminal')
+    return tab.id
+  }, worktreeId)
 }
 
 async function activateTerminalTab(page: Page, tabId: string): Promise<void> {
@@ -162,6 +216,84 @@ async function waitForPanePtyIdOnTab(page: Page, tabId: string): Promise<string>
     throw new Error(`Pane for tab ${tabId} has no PTY binding`)
   }
   return ptyId
+}
+
+async function readPaneIdentityOnTab(
+  page: Page,
+  tabId: string
+): Promise<{ leafId: string; ptyId: string; cols: number; rows: number }> {
+  const identity = await page.evaluate((tabId) => {
+    const manager = window.__paneManagers?.get(tabId)
+    const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0] ?? null
+    if (!pane) {
+      return null
+    }
+    return {
+      leafId: pane.container.dataset.leafId ?? null,
+      ptyId: pane.container.dataset.ptyId ?? null,
+      cols: pane.terminal.cols,
+      rows: pane.terminal.rows
+    }
+  }, tabId)
+  if (!identity?.leafId || !identity.ptyId) {
+    throw new Error(`Pane identity for tab ${tabId} is incomplete`)
+  }
+  return {
+    leafId: identity.leafId,
+    ptyId: identity.ptyId,
+    cols: identity.cols,
+    rows: identity.rows
+  }
+}
+
+async function resetHiddenOutputDebug(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    ;(window as HiddenOutputRecoveryWindow).__terminalPtyOutputDebug?.reset()
+  })
+}
+
+async function readHiddenOutputDebug(page: Page): Promise<HiddenOutputDebugSnapshot | null> {
+  return page.evaluate(() => {
+    return (window as HiddenOutputRecoveryWindow).__terminalPtyOutputDebug?.snapshot() ?? null
+  })
+}
+
+async function injectPaneData(
+  page: Page,
+  paneKey: string,
+  data: string,
+  meta?: { seq?: number; rawLength?: number }
+): Promise<void> {
+  const injected = await page.evaluate(
+    ({ paneKey, data, meta }) =>
+      (window as HiddenOutputRecoveryWindow).__terminalPtyDataInjection?.inject(
+        paneKey,
+        data,
+        meta
+      ) ?? false,
+    { paneKey, data, meta }
+  )
+  if (!injected) {
+    throw new Error(`No terminal PTY data injector registered for ${paneKey}`)
+  }
+}
+
+async function setHiddenSnapshotOverride(
+  page: Page,
+  ptyId: string,
+  snapshot: { data: string; cols: number; rows: number; seq?: number }
+): Promise<void> {
+  await page.evaluate(
+    ({ ptyId, snapshot }) => {
+      const api = (window as HiddenOutputRecoveryWindow).__terminalHiddenSnapshotOverride
+      if (!api) {
+        throw new Error('Hidden snapshot override API unavailable')
+      }
+      api.setPending(ptyId, snapshot)
+      api.resolve(ptyId)
+    },
+    { ptyId, snapshot }
+  )
 }
 
 async function resetTerminalOutputSchedulerDebug(page: Page): Promise<void> {
@@ -563,6 +695,57 @@ test.describe('Terminal tab switch visual restore', () => {
         ? `alt-screen hidden redraw left corrupted geometry:\n${corruptionReports.join('\n')}`
         : undefined
     ).toEqual([])
+  })
+
+  test('restores skipped hidden agent output on light tab resume', async ({ orcaPage }) => {
+    await waitForSessionReady(orcaPage)
+    await waitForActiveWorktree(orcaPage)
+    await ensureTerminalVisible(orcaPage)
+    await waitForActiveTerminalManager(orcaPage, 30_000)
+
+    const shellTabId = (await getActiveTabId(orcaPage))!
+    const agentTabId = await createCodexMarkedTerminalTab(orcaPage)
+    await waitForActiveTerminalManager(orcaPage, 30_000)
+    await waitForPanePtyIdOnTab(orcaPage, agentTabId)
+    const paneIdentity = await readPaneIdentityOnTab(orcaPage, agentTabId)
+    const paneKey = `${agentTabId}:${paneIdentity.leafId}`
+
+    await activateTerminalTab(orcaPage, shellTabId)
+    const runId = `${Date.now()}`
+    const marker = `${TAB_SWITCH_MARKER_PREFIX}_SKIPPED_AGENT_${runId}`
+    const hiddenFrame = [
+      '\x1b[?2026h',
+      `${marker} hidden renderer frame`,
+      'status=streaming while tab-hidden',
+      '\x1b[?2026l'
+    ].join('\r\n')
+    await resetHiddenOutputDebug(orcaPage)
+    await injectPaneData(orcaPage, paneKey, hiddenFrame, {
+      seq: hiddenFrame.length,
+      rawLength: hiddenFrame.length
+    })
+
+    await expect
+      .poll(async () => (await readHiddenOutputDebug(orcaPage))?.hiddenRendererSkipCount ?? 0, {
+        timeout: 5_000,
+        message: 'Codex-marked hidden output did not take the skipped renderer path'
+      })
+      .toBeGreaterThan(0)
+    await setHiddenSnapshotOverride(orcaPage, paneIdentity.ptyId, {
+      data: `${marker} restored from main snapshot\r\n`,
+      cols: paneIdentity.cols,
+      rows: paneIdentity.rows,
+      seq: hiddenFrame.length
+    })
+
+    await activateTerminalTab(orcaPage, agentTabId)
+
+    await expect
+      .poll(() => getTerminalContent(orcaPage, 8_000), {
+        timeout: 10_000,
+        message: 'light tab resume did not request skipped hidden-output recovery'
+      })
+      .toContain(marker)
   })
 
   test('keeps returned tab glyphs intact across tab switches', async ({ orcaPage }, testInfo) => {

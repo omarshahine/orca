@@ -50,8 +50,10 @@ export function resumeTerminalVisibility({
   withSuppressedScrollTracking(() => {
     if (shouldUseLightTabResume) {
       // Why: intra-worktree tab switches only toggle the overlay. Keeping
-      // output drain and atlas rebuilds off this path avoids racing the
-      // overlay's delayed geometry fit.
+      // synchronous drain and atlas rebuilds off this path avoids racing the
+      // overlay's delayed geometry fit. Still request hidden-output recovery:
+      // agent TUIs can suppress hidden bytes until the pane is foregrounded.
+      requestLightTabBacklogRecovery(manager)
       if (isActive) {
         focusActivePane(manager)
       }
@@ -94,6 +96,12 @@ export function hideTerminalVisibility({
     return { hiddenReason: 'surface', renderingSuspended: false }
   }
   return { hiddenReason: null, renderingSuspended: false }
+}
+
+function requestLightTabBacklogRecovery(manager: PaneManager): void {
+  for (const pane of manager.getPanes()) {
+    requestTerminalBacklogRecovery(pane.terminal)
+  }
 }
 
 function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean): void {
