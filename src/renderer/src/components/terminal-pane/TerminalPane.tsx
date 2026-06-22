@@ -148,6 +148,7 @@ type TerminalPaneProps = {
   cwd?: string
   isActive: boolean
   isVisible?: boolean
+  isWorktreeActive?: boolean
   // Why: when set (Activity portal), this pane visually isolates the given
   // split pane so only that leaf is shown. Implemented as a transient layout
   // override (separate snapshot ref) — does NOT touch expandedPaneId state
@@ -222,6 +223,7 @@ export default function TerminalPane({
   cwd,
   isActive,
   isVisible = true,
+  isWorktreeActive = isVisible,
   isolatedPaneKey = null,
   onPtyExit,
   onCloseTab
@@ -1320,6 +1322,7 @@ export default function TerminalPane({
     cwd,
     isActive,
     isVisible,
+    isWorktreeActive,
     // Why: hidden startup probes are opacity-hidden but measurable; ordinary
     // hidden tabs are display:none and refit on visibility resume instead.
     isSyncFitEnabled: isVisible || shouldMeasureHiddenStartup,
