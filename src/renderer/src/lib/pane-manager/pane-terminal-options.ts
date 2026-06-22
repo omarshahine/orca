@@ -26,6 +26,10 @@ export function buildDefaultTerminalOptions(): ITerminalOptions {
     fontWeight: '300',
     fontWeightBold: '500',
     scrollback: 10000,
+    // Why: Orca's default terminal cells are taller than many users' baseline
+    // terminal, so a small multiplier keeps row-per-wheel movement familiar.
+    scrollSensitivity: 1.15,
+    fastScrollSensitivity: 5,
     allowTransparency: false,
     // Why: on macOS, non-US layouts rely on Option to compose characters like @ and €.
     macOptionIsMeta: false,

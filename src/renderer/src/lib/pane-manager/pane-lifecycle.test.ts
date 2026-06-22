@@ -83,6 +83,13 @@ describe('buildDefaultTerminalOptions', () => {
     expect(buildDefaultTerminalOptions().scrollbar?.width).toBe(7)
   })
 
+  it('slightly increases default terminal wheel scrolling while preserving fast scroll', () => {
+    const options = buildDefaultTerminalOptions()
+
+    expect(options.scrollSensitivity).toBe(1.15)
+    expect(options.fastScrollSensitivity).toBe(5)
+  })
+
   it('only uses inactive outline for block cursors', () => {
     expect(resolveTerminalCursorInactiveStyle('block')).toBe('outline')
     expect(resolveTerminalCursorInactiveStyle('bar')).toBe('bar')
