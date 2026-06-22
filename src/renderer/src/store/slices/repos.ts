@@ -625,6 +625,7 @@ export type RepoSlice = {
   folderWorkspacePathStatuses: Record<string, FolderWorkspacePathStatusCacheEntry>
   activeRepoId: string | null
   fetchRepos: () => Promise<void>
+  fetchReposForAllHosts: () => Promise<void>
   fetchRuntimeEnvironmentRepos: (environmentId: string) => Promise<Repo[]>
   fetchProjectGroups: () => Promise<void>
   fetchFolderWorkspaces: () => Promise<void>
@@ -794,6 +795,58 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     } catch (err) {
       console.error(`Failed to fetch repos for runtime environment ${environmentId}:`, err)
       return []
+    }
+  },
+
+  fetchReposForAllHosts: async () => {
+    // Why: a cold start that restores a remote workspace re-activates that
+    // remote runtime environment, and fetching only the active host hides every
+    // other host's repos (notably all local repos), which reads as "my projects
+    // vanished". Load local + every configured runtime environment so the
+    // sidebar "All hosts" scope shows them together regardless of which
+    // environment is active. Each host fails soft: an unreachable/disconnected
+    // host is skipped without blocking the others.
+    const applyResult = (result: Awaited<ReturnType<typeof fetchReposForTarget>>): void => {
+      const validRepoIds = new Set(result.repos.map((repo) => repo.id))
+      set((s) => ({
+        repos: result.repos,
+        ...result.projectCompatibility,
+        folderWorkspacePathStatuses: {},
+        activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
+        filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
+        setupScriptPromptDismissedRepoIds: filterSetupScriptPromptDismissalsToValidRepos(
+          s.setupScriptPromptDismissedRepoIds,
+          validRepoIds
+        )
+      }))
+    }
+
+    // Local first so local repos are present even if a remote fetch stalls.
+    try {
+      applyResult(await fetchReposForTarget({ kind: 'local' }, get().repos))
+    } catch (err) {
+      console.error('Failed to fetch local repos for all-host load:', err)
+    }
+
+    let environments: { id: string }[] = []
+    try {
+      environments = (await window.api.runtimeEnvironments.list()) ?? []
+    } catch (err) {
+      console.warn('Failed to list runtime environments for all-host load:', err)
+    }
+
+    // Sequential to avoid concurrent set() races on the merged repos array.
+    for (const environment of environments) {
+      try {
+        applyResult(
+          await fetchReposForTarget(
+            { kind: 'environment', environmentId: environment.id },
+            get().repos
+          )
+        )
+      } catch (err) {
+        console.warn(`Skipped repos for runtime environment ${environment.id}:`, err)
+      }
     }
   },
 
