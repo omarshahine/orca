@@ -24,7 +24,7 @@ export function useIntegrationCardShellClass(className?: string): string {
   const presentation = useIntegrationCardPresentation()
   return cn(
     presentation === 'setup-guide'
-      ? 'border-t border-border/60 bg-card px-1 py-3 first:border-t-0'
+      ? 'border-t-8 border-t-muted/80 bg-card px-1 py-3 first:border-t-0'
       : 'rounded-xl border border-border bg-card px-4 py-3.5 shadow-xs',
     className
   )
