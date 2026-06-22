@@ -130,6 +130,21 @@ function getRuntimeRepoTarget(
   return repo ? { target, repo } : null
 }
 
+// Why: the local `gh:enqueuePRRefresh` IPC only resolves repos registered in the
+// local store, so enqueuing it for a repo owned by a remote/SSH/runtime host
+// rejects with "Access denied: unknown repository path". Remote candidates are
+// meant to refresh through the runtime route (getRuntimeRepoTarget); when that
+// route is unavailable (host not the active environment, or disconnected),
+// callers must skip rather than spam the local handler. A flood of those failed
+// invokes + unhandled rejections grew the renderer heap to the V8 ceiling and
+// crashed it (OOM, exit 5 — see crash-reports.json).
+function isLocalHostPRRefreshCandidate(candidate: GitHubPRRefreshCandidate): boolean {
+  if (candidate.connectionId) {
+    return false
+  }
+  return candidate.executionHostId == null || candidate.executionHostId === LOCAL_EXECUTION_HOST_ID
+}
+
 type GitHubWorkItemRequestContext = {
   repoId: string
   repoPath: string
@@ -3394,6 +3409,9 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       })
       return
     }
+    if (!isLocalHostPRRefreshCandidate(candidate)) {
+      return
+    }
     const enqueue = window.api.gh.enqueuePRRefresh
     if (enqueue) {
       void enqueue({ candidate, reason, priority })
@@ -3733,7 +3751,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           fallbackPRNumber: candidate.fallbackPRNumber ?? null,
           fallbackPRSource: candidate.fallbackPRSource ?? null
         })
-      } else {
+      } else if (isLocalHostPRRefreshCandidate(candidate)) {
         void window.api.gh.enqueuePRRefresh?.({ candidate, reason: 'swr', priority: 10 })
       }
     }
@@ -3806,7 +3824,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             fallbackPRNumber: candidate.fallbackPRNumber ?? null,
             fallbackPRSource: candidate.fallbackPRSource ?? null
           })
-        } else {
+        } else if (isLocalHostPRRefreshCandidate(candidate)) {
           void window.api.gh.enqueuePRRefresh?.({ candidate, reason: 'post-push', priority: 100 })
         }
       }
@@ -4004,7 +4022,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             fallbackPRNumber: candidate.fallbackPRNumber ?? null,
             fallbackPRSource: candidate.fallbackPRSource ?? null
           })
-        } else {
+        } else if (isLocalHostPRRefreshCandidate(candidate)) {
           void window.api.gh.enqueuePRRefresh?.({ candidate, reason: 'active', priority: 80 })
         }
       }
