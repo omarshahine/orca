@@ -819,6 +819,13 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           validRepoIds
         )
       }))
+      // Why: preserve the safe-auto fork sync that fetchRepos /
+      // fetchRuntimeEnvironmentRepos schedule after merging each host, so
+      // cold-start (which now routes through here) keeps updating safe-auto forks.
+      scheduleSafeAutoForkSync(
+        get,
+        result.repos.filter((repo) => getRepoExecutionHostId(repo) === result.hostId)
+      )
     }
 
     // Local first so local repos are present even if a remote fetch stalls.
