@@ -67,7 +67,13 @@ export function getProviderUsageStatusLabel(p: ProviderRateLimits): string {
       case 'cli-unavailable':
       case 'usage-unavailable':
         return translate('auto.components.status.bar.tooltip.f8b8dbed85', 'Usage unavailable')
-      default:
+      case 'missing-credentials':
+      case 'missing-scope':
+      case 'parse':
+      case 'rate-limited':
+      case 'server':
+      case 'unknown':
+      case undefined:
         break
     }
   }
@@ -119,7 +125,10 @@ export function getProviderUsageErrorMessage(p: ProviderRateLimits): string {
           'auto.components.status.bar.tooltip.a7517cccb6',
           'Claude usage is unavailable right now.'
         )
-      default:
+      case 'missing-credentials':
+      case 'rate-limited':
+      case 'unknown':
+      case undefined:
         break
     }
   }
