@@ -91,6 +91,12 @@ function withGitUnavailable(fn: () => void): void {
   try {
     fn()
   } finally {
-    process.env.PATH = originalPath
+    // Why: restoring an originally-unset PATH via assignment would write the
+    // string "undefined", corrupting PATH for later tests in this process.
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
   }
 }

@@ -89,13 +89,19 @@ export function isGitRepo(path: string): boolean {
   // genuinely carries Git metadata is still recognized; a directory with only
   // a garbage `.git` file has no valid marker and is correctly rejected.
   const recognizedViaMarker = hasValidGitMarkerSync(path)
-  if (recognizedViaMarker) {
+  if (recognizedViaMarker && !warnedMarkerFallbackThisSession) {
+    // Why: warn only once per session. The folder scanner calls isGitRepo for
+    // many paths; if git is genuinely unavailable, warning per path would flood
+    // the main-process logs without adding signal beyond the first occurrence.
+    warnedMarkerFallbackThisSession = true
     console.warn('[isGitRepo] git rev-parse could not confirm repo; accepted via .git marker', {
       path
     })
   }
   return recognizedViaMarker
 }
+
+let warnedMarkerFallbackThisSession = false
 
 /**
  * Positive-only git probe: returns true only when git itself confirms the path
