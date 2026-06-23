@@ -163,8 +163,11 @@ function getPRRefreshRuntimeRepoTarget(
 
 function shouldEnqueueLocalPRRefresh(candidate: GitHubPRRefreshCandidate): boolean {
   // Why: the local PR coordinator owns local git and SSH bridge refreshes, but
-  // runtime-owned repos must never fall through to the local IPC crash path.
-  return getPRRefreshOwnerRuntimeEnvironmentId(candidate) === null
+  // runtime-owned repos and disconnected SSH repos must not hit the IPC crash path.
+  if (getPRRefreshOwnerRuntimeEnvironmentId(candidate) !== null) {
+    return false
+  }
+  return !candidate.connectionId || candidate.connectionState === 'connected'
 }
 
 type GitHubWorkItemRequestContext = {
