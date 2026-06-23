@@ -183,63 +183,84 @@ function areLineageRecordsEqual(
   )
 }
 
+function isWorktreeContentEqual(worktree: Worktree, candidate: Worktree): boolean {
+  return (
+    worktree.id === candidate.id &&
+    worktree.instanceId === candidate.instanceId &&
+    worktree.repoId === candidate.repoId &&
+    worktree.projectId === candidate.projectId &&
+    worktree.hostId === candidate.hostId &&
+    worktree.projectHostSetupId === candidate.projectHostSetupId &&
+    worktree.path === candidate.path &&
+    worktree.head === candidate.head &&
+    worktree.branch === candidate.branch &&
+    worktree.isBare === candidate.isBare &&
+    worktree.isMainWorktree === candidate.isMainWorktree &&
+    worktree.isSparse === candidate.isSparse &&
+    worktree.displayName === candidate.displayName &&
+    worktree.comment === candidate.comment &&
+    worktree.linkedIssue === candidate.linkedIssue &&
+    worktree.linkedPR === candidate.linkedPR &&
+    worktree.linkedGitLabMR === candidate.linkedGitLabMR &&
+    worktree.linkedGitLabIssue === candidate.linkedGitLabIssue &&
+    worktree.linkedBitbucketPR === candidate.linkedBitbucketPR &&
+    worktree.linkedAzureDevOpsPR === candidate.linkedAzureDevOpsPR &&
+    worktree.linkedGiteaPR === candidate.linkedGiteaPR &&
+    worktree.isArchived === candidate.isArchived &&
+    worktree.isUnread === candidate.isUnread &&
+    worktree.isPinned === candidate.isPinned &&
+    worktree.sortOrder === candidate.sortOrder &&
+    worktree.manualOrder === candidate.manualOrder &&
+    worktree.lastActivityAt === candidate.lastActivityAt &&
+    worktree.workspaceStatus === candidate.workspaceStatus &&
+    worktree.createdWithAgent === candidate.createdWithAgent &&
+    worktree.pendingFirstAgentMessageRename === candidate.pendingFirstAgentMessageRename &&
+    worktree.firstAgentMessageRenameError === candidate.firstAgentMessageRenameError &&
+    worktree.baseRef === candidate.baseRef &&
+    worktree.pushTarget?.remoteName === candidate.pushTarget?.remoteName &&
+    worktree.pushTarget?.branchName === candidate.pushTarget?.branchName &&
+    worktree.pushTarget?.remoteUrl === candidate.pushTarget?.remoteUrl &&
+    worktree.sparseBaseRef === candidate.sparseBaseRef &&
+    arraysShallowEqual(worktree.sparseDirectories, candidate.sparseDirectories) &&
+    arraysShallowEqual(worktree.priorWorktreeIds, candidate.priorWorktreeIds) &&
+    (worktree as WorktreeWithLineage).parentWorktreeId ===
+      (candidate as WorktreeWithLineage).parentWorktreeId &&
+    arraysShallowEqual(
+      (worktree as WorktreeWithLineage).childWorktreeIds,
+      (candidate as WorktreeWithLineage).childWorktreeIds
+    ) &&
+    areLineageRecordsEqual(
+      (worktree as WorktreeWithLineage).lineage,
+      (candidate as WorktreeWithLineage).lineage
+    )
+  )
+}
+
 function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): boolean {
   if (!current || current.length !== next.length) {
     return false
   }
+  return current.every((worktree, index) => isWorktreeContentEqual(worktree, next[index]))
+}
 
-  return current.every((worktree, index) => {
-    const candidate = next[index]
-    return (
-      worktree.id === candidate.id &&
-      worktree.instanceId === candidate.instanceId &&
-      worktree.repoId === candidate.repoId &&
-      worktree.projectId === candidate.projectId &&
-      worktree.hostId === candidate.hostId &&
-      worktree.projectHostSetupId === candidate.projectHostSetupId &&
-      worktree.path === candidate.path &&
-      worktree.head === candidate.head &&
-      worktree.branch === candidate.branch &&
-      worktree.isBare === candidate.isBare &&
-      worktree.isMainWorktree === candidate.isMainWorktree &&
-      worktree.isSparse === candidate.isSparse &&
-      worktree.displayName === candidate.displayName &&
-      worktree.comment === candidate.comment &&
-      worktree.linkedIssue === candidate.linkedIssue &&
-      worktree.linkedPR === candidate.linkedPR &&
-      worktree.linkedGitLabMR === candidate.linkedGitLabMR &&
-      worktree.linkedGitLabIssue === candidate.linkedGitLabIssue &&
-      worktree.linkedBitbucketPR === candidate.linkedBitbucketPR &&
-      worktree.linkedAzureDevOpsPR === candidate.linkedAzureDevOpsPR &&
-      worktree.linkedGiteaPR === candidate.linkedGiteaPR &&
-      worktree.isArchived === candidate.isArchived &&
-      worktree.isUnread === candidate.isUnread &&
-      worktree.isPinned === candidate.isPinned &&
-      worktree.sortOrder === candidate.sortOrder &&
-      worktree.manualOrder === candidate.manualOrder &&
-      worktree.lastActivityAt === candidate.lastActivityAt &&
-      worktree.workspaceStatus === candidate.workspaceStatus &&
-      worktree.createdWithAgent === candidate.createdWithAgent &&
-      worktree.pendingFirstAgentMessageRename === candidate.pendingFirstAgentMessageRename &&
-      worktree.firstAgentMessageRenameError === candidate.firstAgentMessageRenameError &&
-      worktree.baseRef === candidate.baseRef &&
-      worktree.pushTarget?.remoteName === candidate.pushTarget?.remoteName &&
-      worktree.pushTarget?.branchName === candidate.pushTarget?.branchName &&
-      worktree.pushTarget?.remoteUrl === candidate.pushTarget?.remoteUrl &&
-      worktree.sparseBaseRef === candidate.sparseBaseRef &&
-      arraysShallowEqual(worktree.sparseDirectories, candidate.sparseDirectories) &&
-      arraysShallowEqual(worktree.priorWorktreeIds, candidate.priorWorktreeIds) &&
-      (worktree as WorktreeWithLineage).parentWorktreeId ===
-        (candidate as WorktreeWithLineage).parentWorktreeId &&
-      arraysShallowEqual(
-        (worktree as WorktreeWithLineage).childWorktreeIds,
-        (candidate as WorktreeWithLineage).childWorktreeIds
-      ) &&
-      areLineageRecordsEqual(
-        (worktree as WorktreeWithLineage).lineage,
-        (candidate as WorktreeWithLineage).lineage
-      )
-    )
+// Why: a fresh worktree scan returns brand-new Worktree objects every time. When
+// even one worktree changes (e.g. lastActivityAt ticks while an agent runs), the
+// whole list is replaced, so structurally-unchanged worktrees also get new object
+// identities — breaking WorktreeCard's React.memo and re-rendering every card on
+// each update. Those render scopes are retained (see stablyai/orca#6109), so the
+// heap grows ~one worktree-list copy per render. Reuse the existing object for any
+// worktree whose content is unchanged so memo'd cards skip the re-render.
+export function reconcileWorktreeIdentities(
+  current: Worktree[] | undefined,
+  next: Worktree[]
+): Worktree[] {
+  if (!current || current.length === 0) {
+    return next
+  }
+  const byId = new Map(current.map((worktree) => [worktree.id, worktree]))
+  return next.map((worktree) => {
+    const previous = byId.get(worktree.id)
+    return previous && isWorktreeContentEqual(previous, worktree) ? previous : worktree
   })
 }
 
@@ -1432,7 +1453,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           // Why: active worktrees can change branches entirely from a terminal.
           // We refresh that live git identity into renderer state, but only bump
           // sortEpoch when git actually reports a different worktree payload.
-          worktreesByRepo: { ...s.worktreesByRepo, [repoId]: worktrees },
+          worktreesByRepo: {
+            ...s.worktreesByRepo,
+            [repoId]: reconcileWorktreeIdentities(s.worktreesByRepo[repoId], worktrees)
+          },
           detectedWorktreesByRepo: { ...s.detectedWorktreesByRepo, [repoId]: detected },
           sortEpoch: s.sortEpoch + 1,
           ...(removedIds.length > 0 ? buildWorktreePurgeState(s, removedIds) : {})
@@ -1488,7 +1512,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             !(list.length === 0 && current && current.length > 0 && !detected.authoritative)
           ) {
             set((s) => ({
-              worktreesByRepo: { ...s.worktreesByRepo, [r.id]: list },
+              worktreesByRepo: {
+                ...s.worktreesByRepo,
+                [r.id]: reconcileWorktreeIdentities(s.worktreesByRepo[r.id], list)
+              },
               detectedWorktreesByRepo: { ...s.detectedWorktreesByRepo, [r.id]: detected },
               sortEpoch: s.sortEpoch + 1
             }))
