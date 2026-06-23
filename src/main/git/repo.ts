@@ -1,7 +1,7 @@
 /* oxlint-disable max-lines */
 import { execSync } from 'child_process'
-import { existsSync, statSync } from 'fs'
-import { basename } from 'path'
+import { existsSync, readFileSync, statSync } from 'fs'
+import { basename, join } from 'path'
 import { gitExecFileSync, gitExecFileAsync } from './runner'
 import type { BaseRefSearchResult } from '../../shared/types'
 import { parseGitRevListAheadBehindCounts } from '../../shared/git-rev-list-output'
@@ -69,6 +69,41 @@ export function isGitRepo(path: string): boolean {
     if (!existsSync(path) || !statSync(path).isDirectory()) {
       return false
     }
+  } catch {
+    return false
+  }
+
+  // Authoritative positive signal: ask git directly. Covers regular work
+  // trees, linked worktrees (gitfile), submodules, and bare repos.
+  if (gitConfirmsRepo(path)) {
+    return true
+  }
+
+  // Why: `git rev-parse` can fail to produce a clean answer for reasons
+  // unrelated to repo-ness — a transient spawn failure or git-shim hiccup in
+  // the packaged app, resource pressure in the Electron main process, or a
+  // repo whose config errors out. Treating every such failure as "not a repo"
+  // silently downgrades a real repository to a plain folder (worktrees, SCM,
+  // PRs all disappear) and is the regression behind the spurious "Open as
+  // Folder" prompt. Fall back to a validated `.git` marker so a directory that
+  // genuinely carries Git metadata is still recognized; a directory with only
+  // a garbage `.git` file has no valid marker and is correctly rejected.
+  const recognizedViaMarker = hasValidGitMarkerSync(path)
+  if (recognizedViaMarker) {
+    console.warn('[isGitRepo] git rev-parse could not confirm repo; accepted via .git marker', {
+      path
+    })
+  }
+  return recognizedViaMarker
+}
+
+/**
+ * Positive-only git probe: returns true only when git itself confirms the path
+ * is inside a work tree or is a bare repository. Any failure returns false so
+ * the caller can decide whether to trust a non-positive answer.
+ */
+function gitConfirmsRepo(path: string): boolean {
+  try {
     const insideWorkTree = gitExecFileSync(['rev-parse', '--is-inside-work-tree'], {
       cwd: path
     }).trim()
@@ -84,6 +119,41 @@ export function isGitRepo(path: string): boolean {
       cwd: path
     }).trim()
     return bareRepo === 'true'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Filesystem-only check for genuine Git metadata, used as a fallback when git
+ * cannot give a clean answer. Strict enough to reject a directory whose `.git`
+ * is a garbage file (preserving the validation added in 18ed7b27d):
+ * - `.git` directory: accepted only if it contains a HEAD file (a real gitdir),
+ *   so an empty `.git/` folder is not mistaken for a repo.
+ * - `.git` file: accepted only if it points at a gitdir (`gitdir: …`), covering
+ *   linked worktrees and submodules.
+ * - bare repo root: accepted when HEAD + objects/ + refs/ are present.
+ */
+function hasValidGitMarkerSync(path: string): boolean {
+  const dotGit = join(path, '.git')
+  try {
+    const marker = statSync(dotGit)
+    if (marker.isDirectory()) {
+      return statSync(join(dotGit, 'HEAD')).isFile()
+    }
+    if (marker.isFile()) {
+      return /^gitdir:\s*\S/.test(readFileSync(dotGit, 'utf8'))
+    }
+  } catch {
+    // Fall through to the bare-repo marker check.
+  }
+
+  try {
+    return (
+      statSync(join(path, 'HEAD')).isFile() &&
+      statSync(join(path, 'objects')).isDirectory() &&
+      statSync(join(path, 'refs')).isDirectory()
+    )
   } catch {
     return false
   }

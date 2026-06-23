@@ -34,4 +34,63 @@ describe('isGitRepo', () => {
 
     expect(isGitRepo(bareRepo)).toBe(true)
   })
+
+  it('accepts a real repository when git itself cannot be run', () => {
+    // Why: regression guard for the spurious "Open as Folder" prompt. When the
+    // `git rev-parse` probe fails for an environmental reason (here simulated by
+    // making `git` unresolvable), a directory carrying valid Git metadata must
+    // still be recognized rather than silently downgraded to a plain folder.
+    const realRepo = path.join(tmpDir, 'real')
+    mkdirSync(realRepo)
+    git(realRepo, ['init', '--quiet'])
+
+    withGitUnavailable(() => {
+      expect(isGitRepo(realRepo)).toBe(true)
+    })
+  })
+
+  it('rejects a plain folder when git cannot be run', () => {
+    const plain = path.join(tmpDir, 'plain')
+    mkdirSync(plain)
+
+    withGitUnavailable(() => {
+      expect(isGitRepo(plain)).toBe(false)
+    })
+  })
+
+  it('rejects a garbage .git file even when git cannot be run', () => {
+    const fakeRepo = path.join(tmpDir, 'fake-offline')
+    mkdirSync(fakeRepo)
+    writeFileSync(path.join(fakeRepo, '.git'), 'not a gitdir file')
+
+    withGitUnavailable(() => {
+      expect(isGitRepo(fakeRepo)).toBe(false)
+    })
+  })
+
+  it('rejects an empty .git directory', () => {
+    const emptyGitDir = path.join(tmpDir, 'empty-gitdir')
+    mkdirSync(path.join(emptyGitDir, '.git'), { recursive: true })
+
+    withGitUnavailable(() => {
+      expect(isGitRepo(emptyGitDir)).toBe(false)
+    })
+  })
 })
+
+/**
+ * Run `fn` with `git` removed from PATH so the in-process git probe fails the
+ * same way a transient spawn failure would, exercising the `.git`-marker
+ * fallback path. PATH is restored afterward.
+ */
+function withGitUnavailable(fn: () => void): void {
+  const originalPath = process.env.PATH
+  // An empty PATH leaves no directory to resolve the bare `git` binary, so the
+  // probe throws ENOENT — the indeterminate failure the fallback exists for.
+  process.env.PATH = ''
+  try {
+    fn()
+  } finally {
+    process.env.PATH = originalPath
+  }
+}
