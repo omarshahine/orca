@@ -389,7 +389,9 @@ function App(): React.JSX.Element {
       fetchRepos: s.fetchRepos,
       fetchReposForAllHosts: s.fetchReposForAllHosts,
       fetchProjectGroups: s.fetchProjectGroups,
+      fetchProjectGroupsForAllHosts: s.fetchProjectGroupsForAllHosts,
       fetchFolderWorkspaces: s.fetchFolderWorkspaces,
+      fetchFolderWorkspacesForAllHosts: s.fetchFolderWorkspacesForAllHosts,
       fetchAllWorktrees: s.fetchAllWorktrees,
       fetchWorktreeLineage: s.fetchWorktreeLineage,
       fetchSettings: s.fetchSettings,
@@ -842,8 +844,8 @@ function App(): React.JSX.Element {
         // active one) so a cold start that restored a remote workspace doesn't
         // hide local repos. The sidebar "All hosts" scope then shows them all.
         await actions.fetchReposForAllHosts()
-        await actions.fetchProjectGroups()
-        await actions.fetchFolderWorkspaces()
+        await actions.fetchProjectGroupsForAllHosts()
+        await actions.fetchFolderWorkspacesForAllHosts()
         await actions.fetchAllWorktrees()
         await actions.fetchWorktreeLineage()
         const persistedUI = await window.api.ui.get()
