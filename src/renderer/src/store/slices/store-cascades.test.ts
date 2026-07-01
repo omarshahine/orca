@@ -80,6 +80,10 @@ import {
 } from './store-test-helpers'
 import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buffer-captures'
 import { buildOrphanTerminalCleanupPatch } from './terminal-orphan-helpers'
+import {
+  loadSessionCommitDrafts,
+  saveSessionCommitDrafts
+} from '@/lib/source-control-commit-draft-session'
 
 // ─── Tests ────────────────────────────────────────────────────────────
 
@@ -87,6 +91,7 @@ describe('removeWorktree cascade', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     clearRuntimeCompatibilityCacheForTests()
+    saveSessionCommitDrafts({})
     mockApi.worktrees.remove.mockResolvedValue(undefined)
     mockApi.worktrees.forceDeletePreservedBranch.mockResolvedValue({ deleted: true })
     mockApi.runtimeEnvironments.call.mockReset()
@@ -149,6 +154,10 @@ describe('removeWorktree cascade', () => {
       activeTabTypeByWorktree: { [worktreeId]: 'editor' },
       rightSidebarExplorerViewByWorktree: { [worktreeId]: 'search' }
     })
+    saveSessionCommitDrafts({
+      [worktreeId]: 'feat: stale draft',
+      'repo1::/path/wt2': 'fix: keep draft'
+    })
 
     const result = await store.getState().removeWorktree(worktreeId)
     const s = store.getState()
@@ -170,6 +179,7 @@ describe('removeWorktree cascade', () => {
     expect(s.activeFileIdByWorktree[worktreeId]).toBeUndefined()
     expect(s.activeTabTypeByWorktree[worktreeId]).toBeUndefined()
     expect(s.rightSidebarExplorerViewByWorktree[worktreeId]).toBeUndefined()
+    expect(loadSessionCommitDrafts()).toEqual({ 'repo1::/path/wt2': 'fix: keep draft' })
   })
 
   it('warns when workspace removal keeps the local branch', async () => {
@@ -1332,6 +1342,104 @@ describe('setActiveWorktree', () => {
     }
   })
 
+  it('preserves explicit Windows shell selections for Windows SSH terminal tabs', () => {
+    const originalNavigator = globalThis.navigator
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      configurable: true
+    })
+    try {
+      const store = createTestStore()
+      const wt = 'remote-repo::/path/wt1'
+
+      seedStore(store, {
+        repos: [
+          {
+            id: 'remote-repo',
+            path: '/remote/repo',
+            displayName: 'Remote Repo',
+            badgeColor: '#000',
+            addedAt: 0,
+            connectionId: 'ssh-1'
+          }
+        ],
+        sshConnectionStates: new Map([
+          [
+            'ssh-1',
+            {
+              targetId: 'ssh-1',
+              status: 'connected',
+              error: null,
+              reconnectAttempt: 0,
+              remotePlatform: 'win32'
+            }
+          ]
+        ]),
+        settings: { ...getDefaultSettings('/tmp'), terminalWindowsShell: 'wsl.exe' },
+        worktreesByRepo: {
+          'remote-repo': [makeWorktree({ id: wt, repoId: 'remote-repo', path: '/path/wt1' })]
+        }
+      })
+
+      const terminal = store.getState().createTab(wt, undefined, 'cmd.exe')
+      expect(terminal.shellOverride).toBe('cmd.exe')
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: originalNavigator,
+        configurable: true
+      })
+    }
+  })
+
+  it('drops explicit Windows shell selections for non-Windows SSH terminal tabs', () => {
+    const originalNavigator = globalThis.navigator
+    Object.defineProperty(globalThis, 'navigator', {
+      value: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      configurable: true
+    })
+    try {
+      const store = createTestStore()
+      const wt = 'remote-repo::/path/wt1'
+
+      seedStore(store, {
+        repos: [
+          {
+            id: 'remote-repo',
+            path: '/remote/repo',
+            displayName: 'Remote Repo',
+            badgeColor: '#000',
+            addedAt: 0,
+            connectionId: 'ssh-1'
+          }
+        ],
+        sshConnectionStates: new Map([
+          [
+            'ssh-1',
+            {
+              targetId: 'ssh-1',
+              status: 'connected',
+              error: null,
+              reconnectAttempt: 0,
+              remotePlatform: 'linux'
+            }
+          ]
+        ]),
+        settings: { ...getDefaultSettings('/tmp'), terminalWindowsShell: 'wsl.exe' },
+        worktreesByRepo: {
+          'remote-repo': [makeWorktree({ id: wt, repoId: 'remote-repo', path: '/path/wt1' })]
+        }
+      })
+
+      const terminal = store.getState().createTab(wt, undefined, 'cmd.exe')
+      expect(terminal.shellOverride).toBeUndefined()
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: originalNavigator,
+        configurable: true
+      })
+    }
+  })
+
   it('does not offer Git Bash as a local shell override for SSH terminal tabs', () => {
     const originalNavigator = globalThis.navigator
     Object.defineProperty(globalThis, 'navigator', {
@@ -1695,8 +1803,10 @@ describe('setActiveWorktree', () => {
       'canExpandPaneByTabId',
       'terminalLayoutsByTabId',
       'pendingStartupByTabId',
+      'pendingInitialCwdByTabId',
       'pendingSetupSplitByTabId',
       'pendingIssueCommandSplitByTabId',
+      'automaticAgentResumeClaimsByTabId',
       'tabBarOrderByWorktree',
       'cacheTimerByKey',
       'activeTabIdByWorktree'
@@ -1735,6 +1845,16 @@ describe('setActiveWorktree', () => {
       pendingStartupByTabId: {
         [orphanId]: { command: 'codex' }
       },
+      automaticAgentResumeClaimsByTabId: {
+        [orphanId]: {
+          worktreeId: wt,
+          launchAgent: 'codex',
+          providerSession: { key: 'session_id', id: 'sess-1' }
+        }
+      },
+      pendingInitialCwdByTabId: {
+        [orphanId]: '/repo/packages/web'
+      },
       tabBarOrderByWorktree: {
         [wt]: [orphanId]
       },
@@ -1755,6 +1875,8 @@ describe('setActiveWorktree', () => {
     expect(s.runtimePaneTitlesByTabId[orphanId]).toBeUndefined()
     expect(s.terminalLayoutsByTabId[orphanId]).toBeUndefined()
     expect(s.pendingStartupByTabId[orphanId]).toBeUndefined()
+    expect(s.automaticAgentResumeClaimsByTabId[orphanId]).toBeUndefined()
+    expect(s.pendingInitialCwdByTabId[orphanId]).toBeUndefined()
     expect(s.cacheTimerByKey[`${orphanId}:seed`]).toBeUndefined()
     expect(s.terminalLayoutsByTabId[replacement.id]).toEqual(makeLayout())
   })

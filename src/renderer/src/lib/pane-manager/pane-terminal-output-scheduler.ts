@@ -7,15 +7,21 @@ import {
   writeForegroundTerminalChunk,
   type ForegroundTerminalOutputTarget
 } from './pane-terminal-foreground-render-settle'
+import {
+  captureTerminalWriteScrollIntent,
+  enforceTerminalWriteScrollIntent
+} from './terminal-scroll-intent'
 
 type TerminalOutputTarget = ForegroundTerminalOutputTarget
 
 type TerminalOutputBeforeWrite = (data: string) => void
 type TerminalBacklogRecoveryRequest = () => boolean
+type TerminalOutputParsedCallback = () => void
 
 type WriteTerminalOutputOptions = {
   foreground: boolean
   beforeWrite?: TerminalOutputBeforeWrite
+  onForegroundParsed?: TerminalOutputParsedCallback
   onBackgroundBacklogDropped?: () => void
   latencySensitive?: boolean
   forceForegroundRefresh?: boolean
@@ -31,6 +37,7 @@ type QueueChunk = {
   forceForegroundRefresh: boolean
   followupForegroundRefresh: boolean
   stripTransientCursorShows: boolean
+  onForegroundParsed?: TerminalOutputParsedCallback
 }
 
 type QueuedWrite = {
@@ -39,6 +46,7 @@ type QueuedWrite = {
   forceForegroundRefresh: boolean
   followupForegroundRefresh: boolean
   stripTransientCursorShows: boolean
+  onForegroundParsed?: TerminalOutputParsedCallback
 }
 
 type QueueEntry = {
@@ -352,10 +360,16 @@ function removeTransientCursorShowSequences(data: string): string {
         if (synchronizedEndIndex === -1) {
           break
         }
-        // Why: a synchronized frame can end while parked on footer/status
-        // text. Do not expose that transient cell as the visible cursor.
+        // Why: keep the cursor hidden while xterm parses the synchronized
+        // repaint, then restore it after the frame ends so Windows never paints
+        // the cursor in the transient draw position.
         result += data.slice(offset, showIndex)
-        offset = showIndex + CURSOR_SHOW_SEQUENCE.length
+        result += data.slice(
+          showIndex + CURSOR_SHOW_SEQUENCE.length,
+          synchronizedEndIndex + SYNCHRONIZED_OUTPUT_END_SEQUENCE.length
+        )
+        result += CURSOR_SHOW_SEQUENCE
+        offset = synchronizedEndIndex + SYNCHRONIZED_OUTPUT_END_SEQUENCE.length
         showIndex = data.indexOf(CURSOR_SHOW_SEQUENCE, offset)
         continue
       }
@@ -469,6 +483,7 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
   let forceForegroundRefresh = false
   let followupForegroundRefresh = false
   let stripTransientCursorShows = false
+  const parsedCallbacks: TerminalOutputParsedCallback[] = []
 
   while (remaining > 0 && entry.chunkIndex < entry.chunks.length) {
     const chunk = entry.chunks[entry.chunkIndex]
@@ -484,6 +499,9 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
       remaining -= chunk.data.length
       entry.queuedChars -= chunk.data.length
       entry.chunkIndex += 1
+      if (chunk.foreground && chunk.onForegroundParsed) {
+        parsedCallbacks.push(chunk.onForegroundParsed)
+      }
       continue
     }
 
@@ -507,7 +525,15 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
         foreground: foreground === true,
         forceForegroundRefresh,
         followupForegroundRefresh,
-        stripTransientCursorShows
+        stripTransientCursorShows,
+        onForegroundParsed:
+          parsedCallbacks.length > 0
+            ? () => {
+                for (const callback of parsedCallbacks) {
+                  callback()
+                }
+              }
+            : undefined
       }
     : null
 }
@@ -535,6 +561,7 @@ function enqueueChunk(
     forceForegroundRefresh?: boolean
     followupForegroundRefresh?: boolean
     stripTransientCursorShows?: boolean
+    onForegroundParsed?: TerminalOutputParsedCallback
   }
 ): void {
   entry.chunks.push({
@@ -542,7 +569,8 @@ function enqueueChunk(
     foreground: options?.foreground === true,
     forceForegroundRefresh: options?.forceForegroundRefresh === true,
     followupForegroundRefresh: options?.followupForegroundRefresh === true,
-    stripTransientCursorShows: options?.stripTransientCursorShows === true
+    stripTransientCursorShows: options?.stripTransientCursorShows === true,
+    onForegroundParsed: options?.onForegroundParsed
   })
   entry.queuedChars += data.length
   recordQueueDebugPressure()
@@ -600,6 +628,44 @@ function hasDrainableBacklog(): boolean {
   return false
 }
 
+function writeBackgroundTerminalChunk(terminal: TerminalOutputTarget, data: string): void {
+  const scrollIntent = captureTerminalWriteScrollIntent(terminal)
+  if (!scrollIntent) {
+    terminal.write(data)
+    return
+  }
+  if (terminal.write.length < 2) {
+    terminal.write(data)
+    enforceTerminalWriteScrollIntent(terminal, scrollIntent)
+    return
+  }
+  terminal.write(data, () => {
+    enforceTerminalWriteScrollIntent(terminal, scrollIntent)
+  })
+}
+
+function writeForegroundTerminalChunkWithIntent(
+  terminal: TerminalOutputTarget,
+  data: string,
+  options: {
+    forceViewportRefresh: boolean
+    followupViewportRefresh: boolean
+    onParsed?: TerminalOutputParsedCallback
+  }
+): void {
+  const scrollIntent = captureTerminalWriteScrollIntent(terminal)
+  writeForegroundTerminalChunk(terminal, data, {
+    forceViewportRefresh: options.forceViewportRefresh,
+    followupViewportRefresh: options.followupViewportRefresh,
+    onParsed: () => {
+      // Why: recovery must repaint from the scrolled buffer state that xterm
+      // will keep, not from a pre-intent-restored viewport snapshot.
+      enforceTerminalWriteScrollIntent(terminal, scrollIntent)
+      options.onParsed?.()
+    }
+  })
+}
+
 function takeNextDrainableEntry(): QueueEntry | null {
   for (const entry of queuedByTerminal.values()) {
     if (!isEntryDrainable(entry)) {
@@ -619,18 +685,19 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
   try {
     entry.beforeWrite?.(queuedWrite.data)
     if (queuedWrite.foreground) {
-      writeForegroundTerminalChunk(
+      writeForegroundTerminalChunkWithIntent(
         entry.terminal,
         queuedWrite.stripTransientCursorShows
           ? removeTransientCursorShowSequences(queuedWrite.data)
           : queuedWrite.data,
         {
           forceViewportRefresh: queuedWrite.forceForegroundRefresh,
-          followupViewportRefresh: queuedWrite.followupForegroundRefresh
+          followupViewportRefresh: queuedWrite.followupForegroundRefresh,
+          onParsed: queuedWrite.onForegroundParsed
         }
       )
     } else {
-      entry.terminal.write(queuedWrite.data)
+      writeBackgroundTerminalChunk(entry.terminal, queuedWrite.data)
     }
   } catch {
     // Why: pane.terminal.dispose() can race with a queued late-arriving PTY ping;
@@ -714,7 +781,8 @@ export function writeTerminalOutput(
         foreground: true,
         forceForegroundRefresh: options.forceForegroundRefresh,
         followupForegroundRefresh: options.followupForegroundRefresh,
-        stripTransientCursorShows: options.stripTransientCursorShows
+        stripTransientCursorShows: options.stripTransientCursorShows,
+        onForegroundParsed: options.onForegroundParsed
       })
       if (debugEnabled) {
         debugState.foregroundWriteCount++
@@ -780,7 +848,8 @@ export function writeTerminalOutput(
         foreground: true,
         forceForegroundRefresh: options.forceForegroundRefresh,
         followupForegroundRefresh: options.followupForegroundRefresh,
-        stripTransientCursorShows: options.stripTransientCursorShows
+        stripTransientCursorShows: options.stripTransientCursorShows,
+        onForegroundParsed: options.onForegroundParsed
       })
       if (debugEnabled) {
         debugState.foregroundWriteCount++
@@ -806,7 +875,8 @@ export function writeTerminalOutput(
         foreground: true,
         forceForegroundRefresh: options.forceForegroundRefresh,
         followupForegroundRefresh: options.followupForegroundRefresh,
-        stripTransientCursorShows: options.stripTransientCursorShows
+        stripTransientCursorShows: options.stripTransientCursorShows,
+        onForegroundParsed: options.onForegroundParsed
       })
       if (debugEnabled) {
         debugState.foregroundWriteCount++
@@ -823,12 +893,13 @@ export function writeTerminalOutput(
       debugState.foregroundWriteCount++
     }
     options.beforeWrite?.(data)
-    writeForegroundTerminalChunk(
+    writeForegroundTerminalChunkWithIntent(
       terminal,
       options.stripTransientCursorShows ? removeTransientCursorShowSequences(data) : data,
       {
-        forceViewportRefresh: options.forceForegroundRefresh,
-        followupViewportRefresh: options.followupForegroundRefresh
+        forceViewportRefresh: options.forceForegroundRefresh === true,
+        followupViewportRefresh: options.followupForegroundRefresh === true,
+        onParsed: options.onForegroundParsed
       }
     )
     return
@@ -896,18 +967,19 @@ export function flushTerminalOutput(
     try {
       entry.beforeWrite?.(queuedWrite.data)
       if (queuedWrite.foreground) {
-        writeForegroundTerminalChunk(
+        writeForegroundTerminalChunkWithIntent(
           terminal,
           queuedWrite.stripTransientCursorShows
             ? removeTransientCursorShowSequences(queuedWrite.data)
             : queuedWrite.data,
           {
             forceViewportRefresh: queuedWrite.forceForegroundRefresh,
-            followupViewportRefresh: queuedWrite.followupForegroundRefresh
+            followupViewportRefresh: queuedWrite.followupForegroundRefresh,
+            onParsed: queuedWrite.onForegroundParsed
           }
         )
       } else {
-        terminal.write(queuedWrite.data)
+        writeBackgroundTerminalChunk(terminal, queuedWrite.data)
       }
     } catch {
       // Why: pane.terminal.dispose() can race with a queued late-arriving PTY ping;

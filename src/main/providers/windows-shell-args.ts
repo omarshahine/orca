@@ -1,4 +1,4 @@
-import { win32 as pathWin32 } from 'path'
+import { win32 as pathWin32 } from 'node:path'
 import { isWindowsGitBashShellPath } from '../git-bash'
 import { parseWslPath, toLinuxPath, toWindowsWslPath } from '../wsl'
 import {
@@ -136,6 +136,7 @@ export function resolveWindowsShellLaunchArgs(
 ): WindowsShellLaunchArgs {
   const shellBasename = pathWin32.basename(shellPath).toLowerCase()
   const nativeCwd = normalizeMsysDrivePath(cwd)
+  const isMsysDriveCwd = nativeCwd !== cwd
 
   if (shellBasename === 'cmd.exe') {
     const shellArgStartupCommand = getCmdShellArgStartupCommand(startupCommand)
@@ -183,7 +184,7 @@ export function resolveWindowsShellLaunchArgs(
         validationCwd: cwd
       }
     }
-    if (wslContext?.treatPosixCwdAsWsl && cwd.startsWith('/')) {
+    if (wslContext?.treatPosixCwdAsWsl && cwd.startsWith('/') && !isMsysDriveCwd) {
       return {
         shellArgs: buildWslShellArgs(cwd, wslContext.distro),
         effectiveCwd: defaultCwd,
