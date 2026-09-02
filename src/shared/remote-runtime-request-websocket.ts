@@ -11,14 +11,13 @@ import {
   invalidRemoteRuntimeResponseError,
   remoteRuntimeUnavailableError
 } from './remote-runtime-request-frames'
-import { classifyRemotePairingHostname } from './remote-pairing-address'
 import {
-  getRemoteRuntimeTunnelDialer,
-  RemoteRuntimeTunnelAgent
+  createRemoteRuntimeWebSocket,
+  describeRemoteRuntimeSocketError,
+  remoteRuntimeSocketCreationError
 } from './remote-runtime-tunnel-dialer'
 
-export const TUNNEL_DIALER_UNAVAILABLE_MESSAGE =
-  'This server is shared over Tailcat. Install the tailcat CLI on this computer to connect.'
+export { TUNNEL_DIALER_UNAVAILABLE_MESSAGE } from './remote-runtime-tunnel-dialer'
 
 export type RemoteRuntimeWebSocket = {
   ws: WebSocket
@@ -57,10 +56,10 @@ export function openRemoteRuntimeWebSocket(
       })
     )
   }
-  const onError = (): void => {
+  const onError = (error: Error): void => {
     callbacks.onError(
       ws,
-      remoteRuntimeUnavailableError('Could not connect to the remote Orca runtime.')
+      remoteRuntimeUnavailableError(describeRemoteRuntimeSocketError(pairing, error))
     )
   }
   const onClose = (code: number, reason: Buffer): void => callbacks.onClose(ws, code, reason)
@@ -107,14 +106,6 @@ export function openRemoteRuntimeWebSocket(
 
 function ignoreLateSocketError(): void {}
 
-function isLoopbackEndpoint(endpoint: string): boolean {
-  try {
-    return classifyRemotePairingHostname(new URL(endpoint).hostname) === 'loopback'
-  } catch {
-    return false
-  }
-}
-
 function createSocket(
   pairing: PairingOffer
 ):
@@ -134,25 +125,9 @@ function createSocket(
       )
     }
   }
-  const tunnelDialer = pairing.tunnel ? getRemoteRuntimeTunnelDialer() : null
-  if (pairing.tunnel && !tunnelDialer && isLoopbackEndpoint(pairing.endpoint)) {
-    // Why: without tailcat the only address left is the host's own loopback, so fail with the fix
-    // instead of a generic unreachable error.
-    return { ok: false, error: remoteRuntimeUnavailableError(TUNNEL_DIALER_UNAVAILABLE_MESSAGE) }
-  }
   try {
-    const ws =
-      pairing.tunnel && tunnelDialer
-        ? new WebSocket(pairing.endpoint, {
-            agent: new RemoteRuntimeTunnelAgent(pairing.tunnel, tunnelDialer)
-          })
-        : new WebSocket(pairing.endpoint)
-    return { ok: true, ws, keyPair }
+    return { ok: true, ws: createRemoteRuntimeWebSocket(pairing), keyPair }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return {
-      ok: false,
-      error: new RemoteRuntimeClientError('invalid_argument', `Invalid remote endpoint: ${message}`)
-    }
+    return { ok: false, error: remoteRuntimeSocketCreationError(error) }
   }
 }

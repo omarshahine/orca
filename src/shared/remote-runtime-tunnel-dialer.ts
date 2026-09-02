@@ -1,7 +1,14 @@
 import { Agent, type ClientRequestArgs } from 'node:http'
 import type { Socket } from 'node:net'
 import type { Duplex } from 'node:stream'
-import type { PairingTunnel } from './mobile-relay-pairing-offer'
+import WebSocket from 'ws'
+import type { PairingOffer, PairingTunnel } from './mobile-relay-pairing-offer'
+import { classifyRemotePairingHostname } from './remote-pairing-address'
+import { remoteRuntimeUnavailableError } from './remote-runtime-request-frames'
+import { RemoteRuntimeClientError } from './remote-runtime-client-error'
+
+export const TUNNEL_DIALER_UNAVAILABLE_MESSAGE =
+  'This server is shared over Tailcat. Install the tailcat CLI on this computer to connect.'
 
 /** Opens a raw TCP stream to the runtime's WebSocket port through the tunnel named in a pairing offer. */
 export type RemoteRuntimeTunnelDialer = (tunnel: PairingTunnel) => Promise<Socket>
@@ -56,4 +63,50 @@ export class RemoteRuntimeTunnelAgent extends Agent {
     )
     return undefined
   }
+}
+
+/**
+ * The one place a pairing offer becomes a socket. Every remote runtime dial must come through here,
+ * or a tunnel-only host is dialed at an address nothing can reach.
+ *
+ * Throws a `RemoteRuntimeClientError` when the offer needs a tunnel, no dialer is registered, and
+ * the fallback address is the host's own loopback.
+ */
+export function createRemoteRuntimeWebSocket(
+  pairing: PairingOffer,
+  options: WebSocket.ClientOptions = {}
+): WebSocket {
+  const dialer = pairing.tunnel ? getRemoteRuntimeTunnelDialer() : null
+  if (pairing.tunnel && !dialer && isLoopbackEndpoint(pairing.endpoint)) {
+    throw remoteRuntimeUnavailableError(TUNNEL_DIALER_UNAVAILABLE_MESSAGE)
+  }
+  return new WebSocket(
+    pairing.endpoint,
+    pairing.tunnel && dialer
+      ? { ...options, agent: new RemoteRuntimeTunnelAgent(pairing.tunnel, dialer) }
+      : options
+  )
+}
+
+/** Adds the socket's own failure reason for tunnel dials, where the endpoint explains nothing. */
+export function describeRemoteRuntimeSocketError(pairing: PairingOffer, error: Error): string {
+  const detail = pairing.tunnel && error.message ? ` ${error.message}` : ''
+  return `Could not connect to the remote Orca runtime.${detail}`
+}
+
+function isLoopbackEndpoint(endpoint: string): boolean {
+  try {
+    return classifyRemotePairingHostname(new URL(endpoint).hostname) === 'loopback'
+  } catch {
+    return false
+  }
+}
+
+/** Normalizes a `createRemoteRuntimeWebSocket` failure: tunnel refusals pass through, URL errors wrap. */
+export function remoteRuntimeSocketCreationError(error: unknown): RemoteRuntimeClientError {
+  if (error instanceof RemoteRuntimeClientError) {
+    return error
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  return new RemoteRuntimeClientError('invalid_argument', `Invalid remote endpoint: ${message}`)
 }

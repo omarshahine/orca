@@ -7,7 +7,12 @@ import {
   openRemoteRuntimeWebSocket,
   TUNNEL_DIALER_UNAVAILABLE_MESSAGE
 } from './remote-runtime-request-websocket'
-import { setRemoteRuntimeTunnelDialer } from './remote-runtime-tunnel-dialer'
+import {
+  createRemoteRuntimeWebSocket,
+  RemoteRuntimeTunnelAgent,
+  setRemoteRuntimeTunnelDialer
+} from './remote-runtime-tunnel-dialer'
+import { RemoteRuntimeClientError } from './remote-runtime-client-error'
 
 const tunnel = { v: 1 as const, kind: 'tailcat' as const, token: 'tcTOKEN', port: 6768 }
 
@@ -92,5 +97,27 @@ describe('openRemoteRuntimeWebSocket with a tunnel offer', () => {
       opened.socket.cleanup()
       opened.socket.ws.terminate()
     }
+  })
+})
+
+describe('createRemoteRuntimeWebSocket', () => {
+  afterEach(() => {
+    setRemoteRuntimeTunnelDialer(null)
+  })
+
+  it('attaches the tunnel agent for every caller, keeping their own socket options', () => {
+    setRemoteRuntimeTunnelDialer(async () => {
+      throw new Error('not dialed in this test')
+    })
+    const ws = createRemoteRuntimeWebSocket(pairingOffer('ws://192.0.2.1:1'), { maxPayload: 7 })
+    const options = (ws as unknown as { _req?: { agent?: unknown } })._req
+    expect(options?.agent).toBeInstanceOf(RemoteRuntimeTunnelAgent)
+    ws.terminate()
+  })
+
+  it('throws a client error when the only fallback is loopback and no dialer exists', () => {
+    expect(() => createRemoteRuntimeWebSocket(pairingOffer('ws://127.0.0.1:6768'))).toThrow(
+      RemoteRuntimeClientError
+    )
   })
 })
