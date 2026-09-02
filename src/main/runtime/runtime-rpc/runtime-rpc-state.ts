@@ -24,7 +24,8 @@ import type {
   MobilePairingOffer,
   MobileRelayPairingProvider,
   OrcaRuntimeRpcServerOptions,
-  PairingOfferUnavailable
+  PairingOfferUnavailable,
+  RuntimeTunnelAdvertiser
 } from './runtime-rpc-pairing-types'
 import { DEFAULT_WS_PORT } from './runtime-rpc-pairing-types'
 
@@ -68,6 +69,7 @@ export class RuntimeRpcState {
   // transports under the SAME wiring (see ensureMobileSocketWiring) instead of orphaning relay sockets.
   protected detachWebSocketWiring: (() => void) | null = null
   protected mobileRelayPairingProvider: MobileRelayPairingProvider | null = null
+  protected tunnelAdvertiser: RuntimeTunnelAdvertiser | null = null
   protected mobileRelayPairingOfferQueue: Promise<void> = Promise.resolve()
   protected mobileRelayPairingOfferInFlight: {
     generation: number

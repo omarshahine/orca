@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { PAIRING_OFFER_VERSION, type PairingOffer } from './pairing'
+import { PairingTunnelSchema } from './mobile-relay-pairing-offer'
 
 export const RuntimeAccessEndpointSchema = z.object({
   id: z.string().min(1),
@@ -7,8 +8,12 @@ export const RuntimeAccessEndpointSchema = z.object({
   label: z.string().min(1),
   endpoint: z.string().min(1),
   deviceToken: z.string().min(1),
-  publicKeyB64: z.string().min(1)
+  publicKeyB64: z.string().min(1),
+  tunnel: PairingTunnelSchema.optional()
 })
+
+export const RuntimeConnectionDependencySchema = z.enum(['ssh-tunnel', 'tailcat'])
+export type RuntimeConnectionDependency = z.infer<typeof RuntimeConnectionDependencySchema>
 
 export const PublicRuntimeAccessEndpointSchema = RuntimeAccessEndpointSchema.omit({
   deviceToken: true,
@@ -30,7 +35,7 @@ export const KnownRuntimeEnvironmentSchema = z.object({
   lastUsedAt: z.number().finite().nullable(),
   runtimeId: z.string().min(1).nullable(),
   source: RuntimeEnvironmentSourceSchema.optional(),
-  connectionDependency: z.literal('ssh-tunnel').optional(),
+  connectionDependency: RuntimeConnectionDependencySchema.optional(),
   endpoints: z.array(RuntimeAccessEndpointSchema).min(1),
   preferredEndpointId: z.string().min(1)
 })
@@ -66,7 +71,7 @@ export function createEnvironmentFromPairingOffer(args: {
   offer: PairingOffer
   runtimeId?: string | null
   source?: RuntimeEnvironmentSource
-  connectionDependency?: 'ssh-tunnel'
+  connectionDependency?: RuntimeConnectionDependency
 }): KnownRuntimeEnvironment {
   const endpointId = `ws-${args.id}`
   return KnownRuntimeEnvironmentSchema.parse({
@@ -87,7 +92,8 @@ export function createEnvironmentFromPairingOffer(args: {
         label: 'WebSocket',
         endpoint: args.offer.endpoint,
         deviceToken: args.offer.deviceToken,
-        publicKeyB64: args.offer.publicKeyB64
+        publicKeyB64: args.offer.publicKeyB64,
+        ...(args.offer.tunnel ? { tunnel: args.offer.tunnel } : {})
       }
     ],
     preferredEndpointId: endpointId
@@ -118,6 +124,7 @@ export function getPreferredPairingOffer(environment: KnownRuntimeEnvironment): 
     endpoint: endpoint.endpoint,
     deviceToken: endpoint.deviceToken,
     publicKeyB64: endpoint.publicKeyB64,
-    ...(environment.pairedDeviceId ? { pairedDeviceId: environment.pairedDeviceId } : {})
+    ...(environment.pairedDeviceId ? { pairedDeviceId: environment.pairedDeviceId } : {}),
+    ...(endpoint.tunnel ? { tunnel: endpoint.tunnel } : {})
   }
 }

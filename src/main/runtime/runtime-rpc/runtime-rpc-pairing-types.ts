@@ -3,7 +3,7 @@ import type { RpcAnyMethod } from '../rpc/core'
 import type { DeviceRegistry } from '../device-registry'
 import type { E2EEKeypair } from '../e2ee-keypair'
 import type { MobileSocketTransportMetadata } from '../rpc/mobile-socket-wiring'
-import type { PairingRelay } from '../../../shared/mobile-relay-pairing-offer'
+import type { PairingRelay, PairingTunnel } from '../../../shared/mobile-relay-pairing-offer'
 import type { MobilePairingConnectionMode } from '../../../shared/mobile-pairing-connection-mode'
 import type { MobileRelayMintFailure } from '../../../shared/mobile-relay-mint-failure'
 import type {
@@ -66,6 +66,15 @@ export type PairingOfferUnavailableReason =
   | 'invalid_advertised_endpoint'
   | 'relay_mint_failed'
   | 'network_exposure_failed'
+  | 'tunnel_unavailable'
+
+/** Owned by the host process: hands the RPC server the tunnel token to embed in offers. */
+export type RuntimeTunnelAdvertiser = {
+  getPairingTunnel(port: number): Omit<PairingTunnel, 'port'> | null
+}
+
+export const TUNNEL_UNAVAILABLE_GUIDANCE =
+  'The Tailcat tunnel is not running on this host. Install the tailcat CLI and enable the tunnel, then generate the link again.'
 
 export type PairingOfferUnavailable = {
   available: false

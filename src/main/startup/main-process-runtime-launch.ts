@@ -14,6 +14,7 @@ import { HEADLESS_RUNTIME_WINDOW_ID } from '../../shared/runtime-types'
 import { OffscreenBrowserBackend } from '../browser/offscreen-browser-backend'
 import { browserManager } from '../browser/browser-manager'
 import { DesktopRelayService } from '../runtime/relay/desktop-relay-service'
+import { attachTailcatTunnel } from '../tunnel/tailcat-tunnel-host'
 import { getServeOptions, getBundledWebClientRoot, printServeReady } from './main-process-serve'
 import {
   bindTerminalRuntimeStartupServices,
@@ -154,6 +155,8 @@ async function launchServeMode(
     console.error('[runtime] Failed to start headless RPC transport:', error)
     throw error
   })
+  // Why: links already handed out with a tunnel token are dead until the tunnel is back up.
+  await attachTailcatTunnel(runtimeRpc, getCanonicalUserDataPath())
   settleDesktopActivation()
   // Why: every attempt must reach app.quit(); a page beforeunload can veto an earlier signal.
   registerServeSignalHandlers(process, () => app.quit())
@@ -227,6 +230,8 @@ async function launchDesktopMode(
   ])
   if (!runtimeRpcStartResult.ok) {
     void showRuntimeRpcStartupFailureDialog(win, runtimeRpcStartResult.error)
+  } else {
+    void attachTailcatTunnel(runtimeRpc, getCanonicalUserDataPath())
   }
   const cloudAuth = getOrcaCloudAuthConfig()
   if (cloudAuth.configured) {

@@ -11,6 +11,13 @@ export function createWebMobileApi(): Partial<PreloadApi> {
       repairWindowsFirewall: () => Promise.resolve({ ok: false, reason: 'unsupported' }),
       openWindowsNetworkSettings: () => Promise.resolve(false),
       getRuntimePairingUrl: () => Promise.resolve({ available: false }),
+      getTunnelStatus: () =>
+        Promise.resolve({
+          installed: false,
+          binaryPath: null,
+          installHint: '',
+          server: { state: 'stopped' as const, port: null }
+        }),
       listDevices: () => Promise.resolve({ devices: [] }),
       revokeDevice: () => Promise.resolve({ revoked: false }),
       listRuntimeAccessGrants: () => Promise.resolve({ grants: [] }),

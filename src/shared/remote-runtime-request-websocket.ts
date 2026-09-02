@@ -11,6 +11,14 @@ import {
   invalidRemoteRuntimeResponseError,
   remoteRuntimeUnavailableError
 } from './remote-runtime-request-frames'
+import { classifyRemotePairingHostname } from './remote-pairing-address'
+import {
+  getRemoteRuntimeTunnelDialer,
+  RemoteRuntimeTunnelAgent
+} from './remote-runtime-tunnel-dialer'
+
+export const TUNNEL_DIALER_UNAVAILABLE_MESSAGE =
+  'This server is shared over Tailcat. Install the tailcat CLI on this computer to connect.'
 
 export type RemoteRuntimeWebSocket = {
   ws: WebSocket
@@ -99,6 +107,14 @@ export function openRemoteRuntimeWebSocket(
 
 function ignoreLateSocketError(): void {}
 
+function isLoopbackEndpoint(endpoint: string): boolean {
+  try {
+    return classifyRemotePairingHostname(new URL(endpoint).hostname) === 'loopback'
+  } catch {
+    return false
+  }
+}
+
 function createSocket(
   pairing: PairingOffer
 ):
@@ -118,8 +134,20 @@ function createSocket(
       )
     }
   }
+  const tunnelDialer = pairing.tunnel ? getRemoteRuntimeTunnelDialer() : null
+  if (pairing.tunnel && !tunnelDialer && isLoopbackEndpoint(pairing.endpoint)) {
+    // Why: without tailcat the only address left is the host's own loopback, so fail with the fix
+    // instead of a generic unreachable error.
+    return { ok: false, error: remoteRuntimeUnavailableError(TUNNEL_DIALER_UNAVAILABLE_MESSAGE) }
+  }
   try {
-    return { ok: true, ws: new WebSocket(pairing.endpoint), keyPair }
+    const ws =
+      pairing.tunnel && tunnelDialer
+        ? new WebSocket(pairing.endpoint, {
+            agent: new RemoteRuntimeTunnelAgent(pairing.tunnel, tunnelDialer)
+          })
+        : new WebSocket(pairing.endpoint)
+    return { ok: true, ws, keyPair }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return {

@@ -14,7 +14,8 @@ import {
   RuntimeEnvironmentStoreSchema,
   type KnownRuntimeEnvironment,
   type RuntimeEnvironmentSource,
-  type RuntimeEnvironmentStore
+  type RuntimeEnvironmentStore,
+  type RuntimeConnectionDependency
 } from './runtime-environments'
 
 const ENVIRONMENTS_FILE = 'orca-environments.json'
@@ -47,7 +48,7 @@ export function addEnvironmentFromPairingCode(
     pairingCode: string
     now?: number
     source?: RuntimeEnvironmentSource
-    connectionDependency?: 'ssh-tunnel'
+    connectionDependency?: RuntimeConnectionDependency
   }
 ): KnownRuntimeEnvironment {
   const offer = parsePairingCode(args.pairingCode)
@@ -138,10 +139,14 @@ export function updateEnvironmentFromPairingCode(
 }
 
 function getPairingConnectionDependency(
-  dependency: 'ssh-tunnel' | undefined,
+  dependency: RuntimeConnectionDependency | undefined,
   offer: PairingOffer
-): { connectionDependency?: 'ssh-tunnel' } {
-  if (!dependency) {
+): { connectionDependency?: RuntimeConnectionDependency } {
+  // Why: a tunnel offer is dialed through tailcat regardless of what its fallback endpoint looks like.
+  if (offer.tunnel) {
+    return { connectionDependency: 'tailcat' }
+  }
+  if (!dependency || dependency === 'tailcat') {
     return {}
   }
   try {

@@ -15,6 +15,8 @@ import process from 'node:process'
 import { setAppEnvironment, type AppEnvironment } from '../../shared/app-environment'
 import { setSecretStore, type SecretStore } from '../../shared/secret-store'
 import type { ServeReadiness } from '../server/serve-readiness'
+import { decodePairingOffer } from '../../shared/pairing'
+import { attachTailcatTunnel, disposeTailcatTunnel } from '../tunnel/tailcat-tunnel-host'
 import { setRuntimeBrowserCommandsFactory } from '../runtime/runtime-browser-commands-factory'
 import { resolveOrcadBrowserProvider, type OrcadBrowserProvider } from './orcad-browser-provider'
 import { resolveOrcadInstallRoot, resolveOrcadPath, resolveUserDataPath } from './orcad-app-paths'
@@ -92,6 +94,8 @@ export type OrcadOptions = {
   pairingAddress?: string
   /** Literal IP to bind. Defaults to loopback; see orcad-bind-address.ts. */
   bind?: string
+  /** Share the runtime over a tailcat tunnel; the pairing offer embeds its address blob. */
+  tailcat?: boolean
 }
 
 export type OrcadHandle = {
@@ -219,6 +223,9 @@ async function startOrcadRuntime(
   const advertised = boundEndpoint
     ? resolveAdvertisedPairingEndpoint(boundEndpoint, options.pairingAddress)
     : null
+  if (options.tailcat) {
+    await attachTailcatTunnel(rpc, runtimeUserDataPath, { startServer: true })
+  }
   const offer = options.noPairing
     ? ({
         available: false,
@@ -228,7 +235,8 @@ async function startOrcadRuntime(
     : rpc.createPairingOffer({
         address: options.pairingAddress,
         name: `CLI ${new Date().toLocaleDateString()}`,
-        scope: 'runtime'
+        scope: 'runtime',
+        tunnel: options.tailcat
       })
 
   const readiness: ServeReadiness = {
@@ -246,7 +254,8 @@ async function startOrcadRuntime(
           deviceId: offer.deviceId,
           webClientUrl: offer.webClientUrl,
           scope: 'runtime',
-          qr: null
+          qr: null,
+          ...orcadTunnelReadiness(offer.pairingUrl)
         }
       : offer,
     // Why in the readiness payload: this is the one message a supervisor and a deploy
@@ -265,6 +274,7 @@ async function startOrcadRuntime(
       try {
         await rpc.stop()
       } finally {
+        await disposeTailcatTunnel()
         // Why disconnect and not shut down: the daemon must outlive this process, or an
         // orcad restart goes back to killing every running terminal. See
         // orcad-daemon-supervision.ts.
@@ -276,6 +286,11 @@ async function startOrcadRuntime(
       }
     }
   }
+}
+
+function orcadTunnelReadiness(pairingUrl: string): { tunnel?: { kind: 'tailcat'; token: string } } {
+  const tunnel = decodePairingOffer(pairingUrl).tunnel
+  return tunnel ? { tunnel: { kind: 'tailcat', token: tunnel.token } } : {}
 }
 
 export function parseArgs(argv: string[]): OrcadOptions {
@@ -294,6 +309,8 @@ export function parseArgs(argv: string[]): OrcadOptions {
       options.json = true
     } else if (arg === '--no-pairing') {
       options.noPairing = true
+    } else if (arg === '--tailcat') {
+      options.tailcat = true
     } else if (arg === '--bind') {
       const value = argv[i + 1]
       if (value === undefined) {
@@ -311,6 +328,11 @@ export function parseArgs(argv: string[]): OrcadOptions {
     } else {
       throw new Error(`Unknown argument: ${arg}`)
     }
+  }
+  if (options.tailcat && options.noPairing) {
+    throw new Error(
+      'A tailcat tunnel is only reachable through a pairing offer; remove --no-pairing.'
+    )
   }
   return options
 }

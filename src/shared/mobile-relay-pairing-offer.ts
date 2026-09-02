@@ -3,13 +3,16 @@ import {
   PAIRING_DEVICE_TOKEN_MAX_CHARACTERS,
   PAIRING_ENDPOINT_MAX_CHARACTERS,
   PAIRING_PUBLIC_KEY_MAX_CHARACTERS,
-  PAIRING_RELAY_URL_MAX_CHARACTERS
+  PAIRING_RELAY_URL_MAX_CHARACTERS,
+  PAIRING_TUNNEL_TOKEN_MAX_CHARACTERS
 } from './mobile-pairing-protocol-limits'
 
 export const PAIRING_OFFER_VERSION = 2
 const PairingScopeSchema = z.enum(['mobile', 'runtime'])
 const BASE64URL_16_PATTERN = /^[A-Za-z0-9_-]{16}$/
 const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
+// Why: tailcat prints its address blob as `tc` + base64url; anything else is not a dialable server.
+const TAILCAT_ADDRESS_BLOB_PATTERN = /^tc[A-Za-z0-9_-]+$/
 const MAX_INVITE_TTL_MS = 10 * 60 * 1000
 // The cell stamps expiry from its own clock; without leeway, a cell clock
 // even slightly ahead of this machine makes every invite fail validation
@@ -42,6 +45,20 @@ function isCanonicalBase64Key(value: string): boolean {
     return false
   }
 }
+
+// Why: the blob pins the host's WireGuard key and relay but carries no port, so the WS port rides beside it.
+export const PairingTunnelSchema = z.object({
+  v: z.literal(1),
+  kind: z.literal('tailcat'),
+  token: z
+    .string()
+    .min(3)
+    .max(PAIRING_TUNNEL_TOKEN_MAX_CHARACTERS)
+    .regex(TAILCAT_ADDRESS_BLOB_PATTERN, 'Expected a tailcat address blob'),
+  port: z.number().int().min(1).max(65535)
+})
+
+export type PairingTunnel = z.infer<typeof PairingTunnelSchema>
 
 export function createPairingOfferSchema(now: () => number = () => Date.now()) {
   const relaySchema = z.object({
@@ -77,7 +94,9 @@ export function createPairingOfferSchema(now: () => number = () => Date.now()) {
       publicKeyB64: z.string().min(1).max(PAIRING_PUBLIC_KEY_MAX_CHARACTERS),
       pairedDeviceId: z.string().min(1).max(128).optional(),
       scope: PairingScopeSchema.optional(),
-      relay: relaySchema.optional()
+      relay: relaySchema.optional(),
+      // Why: unlike relay, a tunnel is valid for both scopes — a desktop client dials it the same way a phone would.
+      tunnel: PairingTunnelSchema.optional()
     })
     .superRefine((offer, ctx) => {
       if (offer.relay && offer.scope === 'runtime') {
