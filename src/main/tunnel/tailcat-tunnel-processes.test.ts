@@ -286,6 +286,30 @@ describe('TailcatTunnelServer', () => {
     }
   })
 
+  it('terminates the previous child before serving a different port', async () => {
+    const { spawn, children, specs } = fakeSpawner()
+    const server = new TailcatTunnelServer({
+      binary: 'tailcat',
+      keyPath: existingKeyPath(),
+      spawn,
+      run: runOk
+    })
+    const first = server.start(6768)
+    const firstChild = await spawned(children, 1)
+    firstChild.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+    await first
+    const replaced = server.start(7000)
+    const secondChild = await spawned(children, 2)
+    expect(firstChild.killed).toBe(true)
+    expect(firstChild.signalCode).toBe('SIGTERM')
+    expect(specs[1]?.args).toContain('7000')
+    secondChild.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+    await expect(replaced).resolves.toBe('tcTOKEN')
+    expect(server.getPort()).toBe(7000)
+    await server.stop()
+    expect(secondChild.killed).toBe(true)
+  })
+
   it('escalates to SIGKILL when the child ignores SIGTERM', async () => {
     const { spawn, children } = fakeSpawner()
     const server = new TailcatTunnelServer({

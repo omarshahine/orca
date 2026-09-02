@@ -77,9 +77,13 @@ export class TailcatTunnelServer {
     }
     // Why: a start inside a backoff window must own the relaunch, or two children race for the port.
     this.clearRestartTimer()
+    const generation = ++this.generation
+    const previous = this.child
+    this.child = null
     this.port = port
     this.restartAttempt = 0
-    return this.launch(++this.generation)
+    // Why: a port change replaces the child; the old one would otherwise keep serving unsupervised.
+    return this.launch(generation, previous)
   }
 
   async stop(): Promise<void> {
@@ -94,8 +98,8 @@ export class TailcatTunnelServer {
     }
   }
 
-  private launch(generation: number): Promise<string> {
-    const pending = this.launchAttempt(generation).finally(() => {
+  private launch(generation: number, previous: TailcatChild | null = null): Promise<string> {
+    const pending = this.launchAttempt(generation, previous).finally(() => {
       if (this.starting === pending) {
         this.starting = null
       }
@@ -104,9 +108,12 @@ export class TailcatTunnelServer {
     return pending
   }
 
-  private async launchAttempt(generation: number): Promise<string> {
+  private async launchAttempt(generation: number, previous: TailcatChild | null): Promise<string> {
     this.setState('starting')
     try {
+      if (previous) {
+        await terminateChild(previous, this.options.terminateGraceMs)
+      }
       await this.ensureServerKey()
       this.assertCurrent(generation)
       const token = await this.spawnServe(generation)

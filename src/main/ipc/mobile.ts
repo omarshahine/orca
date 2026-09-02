@@ -201,7 +201,9 @@ export function registerMobileHandlers(
       // listener stays on loopback, so report unavailable rather than advertise a dead LAN endpoint.
       // "This computer only" is the opposite opt-in: the loopback listener already serves it, and the widen
       // never narrows back, so that pick alone must not expose the runtime off-host.
-      const thisComputerOnly = servesThisComputerOnly(args?.reach, ip)
+      // Why: main enforces the tunnel's loopback-only reach; the renderer's reach is not trusted for it.
+      const thisComputerOnly =
+        args?.transport === 'tailcat' || servesThisComputerOnly(args?.reach, ip)
       if (!thisComputerOnly) {
         try {
           await rpcServer.ensureNetworkExposure()
