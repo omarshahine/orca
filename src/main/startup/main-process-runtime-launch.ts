@@ -45,6 +45,10 @@ export type MainProcessRuntimeLaunchOptions = {
   handleMacAppActivation: () => void
 }
 
+function servesTunnelOnly(serveOptions: NonNullable<ReturnType<typeof getServeOptions>>): boolean {
+  return serveOptions.tailcat && !serveOptions.pairingAddress
+}
+
 function settleDesktopActivation(): void {
   const gate = state.desktopActivationGate
   if (!gate) {
@@ -77,7 +81,9 @@ function installRuntimeRpc(
     enableWebSocket: true,
     // Why: STA-2370 — the desktop app binds the WS listener to loopback until the user pairs a device;
     // `orca serve` is an explicit remote opt-in, and E2E keeps the wide bind its harness connects over.
-    exposeNetworkByDefault: Boolean(serveOptions) || isE2E,
+    // Why: a tunnel-only serve (`--tailcat` with no `--pairing-address`) is reached through tailcat's
+    // loopback proxy, so widening the listener would expose it for nothing.
+    exposeNetworkByDefault: (serveOptions !== null && !servesTunnelOnly(serveOptions)) || isE2E,
     ...(isE2E ? { wsPort: e2eWsPort } : {}),
     ...(devWsPort !== undefined ? { wsPort: devWsPort } : {}),
     ...(serveOptions?.wsPort !== undefined

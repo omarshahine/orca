@@ -7,6 +7,8 @@ import type { DeviceEntry, RuntimePairingTransport } from '../runtime/device-reg
 import { getCanonicalUserDataPath } from '../persistence/loading-store/user-data-path'
 import { TUNNEL_UNAVAILABLE_GUIDANCE } from '../runtime/runtime-rpc/runtime-rpc-pairing-types'
 import { boundWebSocketPort, getTailcatTunnelService } from '../tunnel/tailcat-tunnel-host'
+
+const RUNTIME_PAIRING_LOOPBACK_ADDRESS = '127.0.0.1'
 import { NETWORK_EXPOSURE_FAILED_GUIDANCE } from '../runtime/network-exposure-guidance'
 import {
   getDefaultPairingAddress,
@@ -163,7 +165,12 @@ export function registerMobileHandlers(
         transport?: RuntimePairingTransport
       }
     ) => {
-      const ip = args?.address ?? (await getDefaultPairingAddress(getDefaultRouteInterfaceNames))
+      // Why: a tunnel link needs no reachable address of its own; loopback is only the fallback it carries.
+      const ip =
+        args?.address ??
+        (args?.transport === 'tailcat'
+          ? RUNTIME_PAIRING_LOOPBACK_ADDRESS
+          : await getDefaultPairingAddress(getDefaultRouteInterfaceNames))
       if (!ip) {
         return { available: false as const }
       }
@@ -223,7 +230,7 @@ export function registerMobileHandlers(
         // Why: a grant that only ever pointed at loopback must not make the next launch bind every
         // interface when its local client reconnects (that would restore the exposure one restart later).
         reach: thisComputerOnly ? 'this-computer' : 'network',
-        tunnel: args?.transport === 'tailcat'
+        ...(args?.transport === 'tailcat' ? { tunnel: true } : {})
       })
       if (!offer.available) {
         return offer.reason === 'tunnel_unavailable'

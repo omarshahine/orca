@@ -4,6 +4,7 @@ import type { PairingTunnel } from '../../shared/mobile-relay-pairing-offer'
 import { runProcess, spawnProcess, type ProcessSpec } from '../../shared/child-process/run-process'
 import { connectThroughSocks5, isSocks5RefusalError } from './socks5-connect'
 import { tailcatKeyPathArgument } from './tailcat-binary'
+import { guardChildStreams, terminateChild, type TailcatChild } from './tailcat-child-lifecycle'
 import { onProcessOutputLines } from './tailcat-process-output'
 
 export type TailcatProcessSpawner = (spec: ProcessSpec) => ReturnType<typeof spawnProcess>
@@ -17,6 +18,7 @@ export type TailcatSocksProxyOptions = {
   run?: TailcatProcessRunner
   logf?: (message: string) => void
   startTimeoutMs?: number
+  terminateGraceMs?: number
   connect?: typeof connectThroughSocks5
   dialRetryDelayMs?: number
 }
@@ -34,7 +36,7 @@ const DEFAULT_DIAL_RETRY_DELAY_MS = 1_500
  * reaches every tunnel-shared server without the blob ever appearing in the process table.
  */
 export class TailcatSocksProxy {
-  private child: ReturnType<typeof spawnProcess> | null = null
+  private child: TailcatChild | null = null
   private port: number | null = null
   private starting: Promise<number> | null = null
   private stopped = false
@@ -68,11 +70,8 @@ export class TailcatSocksProxy {
     const child = this.child
     this.child = null
     this.port = null
-    if (child && child.exitCode === null && child.signalCode === null) {
-      await new Promise<void>((resolve) => {
-        child.once('exit', () => resolve())
-        child.kill()
-      })
+    if (child) {
+      await terminateChild(child, this.options.terminateGraceMs)
     }
   }
 
@@ -89,10 +88,10 @@ export class TailcatSocksProxy {
   }
 
   private async start(): Promise<number> {
-    if (this.stopped) {
-      throw new Error('Tailcat proxy has been stopped')
-    }
+    this.assertNotStopped()
     await this.ensureClientKey()
+    // Why: a stop that landed during key generation must not leave an unowned proxy behind.
+    this.assertNotStopped()
     const spawn = this.options.spawn ?? spawnProcess
     const child = spawn({
       program: this.options.binary,
@@ -103,6 +102,7 @@ export class TailcatSocksProxy {
       ],
       timeoutMs: null
     })
+    guardChildStreams(child, this.options.logf)
     this.child = child
     child.stdout.resume()
     return new Promise<number>((resolve, reject) => {
@@ -133,7 +133,7 @@ export class TailcatSocksProxy {
           if (this.child === child) {
             this.child = null
           }
-          child.kill()
+          void terminateChild(child, this.options.terminateGraceMs)
           reject(error)
           return
         }
@@ -144,6 +144,12 @@ export class TailcatSocksProxy {
       child.on('exit', onExit)
       child.on('error', onError)
     })
+  }
+
+  private assertNotStopped(): void {
+    if (this.stopped) {
+      throw new Error('Tailcat proxy has been stopped')
+    }
   }
 
   private async ensureClientKey(): Promise<void> {

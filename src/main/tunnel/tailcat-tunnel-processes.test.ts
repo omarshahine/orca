@@ -14,13 +14,20 @@ import { parseListenAddress, TailcatTunnelServer } from './tailcat-tunnel-server
 class FakeChild extends EventEmitter {
   readonly stdout = new PassThrough()
   readonly stderr = new PassThrough()
+  readonly stdin = new PassThrough()
   exitCode: number | null = null
   signalCode: NodeJS.Signals | null = null
   killed = false
+  signals: NodeJS.Signals[] = []
+  ignoresSigterm = false
 
-  kill(): boolean {
+  kill(signal: NodeJS.Signals = 'SIGTERM'): boolean {
     this.killed = true
-    this.exit(null, 'SIGTERM')
+    this.signals.push(signal)
+    if (signal === 'SIGTERM' && this.ignoresSigterm) {
+      return true
+    }
+    this.exit(null, signal)
     return true
   }
 
@@ -197,7 +204,122 @@ describe('TailcatTunnelServer', () => {
     child.stderr.write('tailcat: bind failed\n')
     child.exit(1)
     await expect(pending).rejects.toThrow(/exited \(1\)/)
-    expect(server.getState()).toBe('failed')
+    // Why: the server is still wanted, so a failed launch queues a retry instead of giving up.
+    expect(server.getState()).toBe('starting')
+    await server.stop()
+    expect(server.getState()).toBe('stopped')
+  })
+
+  it('settles a launch that stop() cancels and spawns nothing afterwards', async () => {
+    const { spawn, children } = fakeSpawner()
+    const server = new TailcatTunnelServer({
+      binary: 'tailcat',
+      keyPath: existingKeyPath(),
+      spawn,
+      run: runOk,
+      restartDelaysMs: [1]
+    })
+    const pending = server.start(6768)
+    await spawned(children, 1)
+    await server.stop()
+    await expect(pending).rejects.toThrow(/was stopped/)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(children).toHaveLength(1)
+    expect(server.getState()).toBe('stopped')
+  })
+
+  it('keeps retrying with backoff when a relaunch dies before it is ready', async () => {
+    vi.useFakeTimers()
+    try {
+      const { spawn, children } = fakeSpawner()
+      const server = new TailcatTunnelServer({
+        binary: 'tailcat',
+        keyPath: existingKeyPath(),
+        spawn,
+        run: runOk,
+        restartDelaysMs: [10, 20]
+      })
+      const pending = server.start(6768)
+      const first = await spawned(children, 1)
+      first.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+      await pending
+      first.exit(1)
+      await vi.advanceTimersByTimeAsync(15)
+      const second = await spawned(children, 2)
+      second.exit(1)
+      expect(server.getState()).toBe('starting')
+      await vi.advanceTimersByTimeAsync(25)
+      const third = await spawned(children, 3)
+      third.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+      await vi.waitFor(() => expect(server.getState()).toBe('running'))
+      await server.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets start() inside a backoff window own the relaunch', async () => {
+    vi.useFakeTimers()
+    try {
+      const { spawn, children } = fakeSpawner()
+      const server = new TailcatTunnelServer({
+        binary: 'tailcat',
+        keyPath: existingKeyPath(),
+        spawn,
+        run: runOk,
+        restartDelaysMs: [1_000]
+      })
+      const pending = server.start(6768)
+      const first = await spawned(children, 1)
+      first.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+      await pending
+      first.exit(1)
+      const restarted = server.start(6768)
+      const second = await spawned(children, 2)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(children).toHaveLength(2)
+      second.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+      await expect(restarted).resolves.toBe('tcTOKEN')
+      await server.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('escalates to SIGKILL when the child ignores SIGTERM', async () => {
+    const { spawn, children } = fakeSpawner()
+    const server = new TailcatTunnelServer({
+      binary: 'tailcat',
+      keyPath: existingKeyPath(),
+      spawn,
+      run: runOk,
+      terminateGraceMs: 10
+    })
+    const pending = server.start(6768)
+    const child = await spawned(children, 1)
+    child.ignoresSigterm = true
+    child.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+    await pending
+    await server.stop()
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(child.signalCode).toBe('SIGKILL')
+  })
+
+  it('survives a child stream error', async () => {
+    const { spawn, children } = fakeSpawner()
+    const server = new TailcatTunnelServer({
+      binary: 'tailcat',
+      keyPath: existingKeyPath(),
+      spawn,
+      run: runOk
+    })
+    const pending = server.start(6768)
+    const child = await spawned(children, 1)
+    child.stdout.write('{"listenAddr":"tcTOKEN"}\n')
+    await pending
+    expect(() => child.stderr.emit('error', new Error('EPIPE'))).not.toThrow()
+    expect(server.getState()).toBe('running')
+    await server.stop()
   })
 
   it('relaunches with the same key after an unexpected exit', async () => {
@@ -251,6 +373,38 @@ describe('TailcatSocksProxy', () => {
     child.exit(0)
     expect(proxy.getPort()).toBeNull()
     await proxy.stop()
+  })
+
+  it('does not spawn a proxy when stopped during key generation', async () => {
+    const { spawn, children } = fakeSpawner()
+    let releaseKeygen: () => void = () => {}
+    const run = vi.fn(
+      (spec: ProcessSpec) =>
+        new Promise<{
+          code: number
+          signal: null
+          stdout: string
+          stderr: string
+          timedOut: boolean
+        }>((resolve) => {
+          releaseKeygen = () => {
+            writeFileSync(spec.args![2]!.slice('--key='.length), '{}')
+            resolve({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false })
+          }
+        })
+    )
+    const keyPath = join(
+      mkdtempSync(join(tmpdir(), 'orca-tailcat-key-')),
+      'orca-client.private.json'
+    )
+    const proxy = new TailcatSocksProxy({ binary: 'tailcat', keyPath, spawn, run })
+    const tunnel = { v: 1 as const, kind: 'tailcat' as const, token: 'tcTOKEN', port: 6768 }
+    const dialed = proxy.dial(tunnel)
+    await vi.waitFor(() => expect(run).toHaveBeenCalled())
+    await proxy.stop()
+    releaseKeygen()
+    await expect(dialed).rejects.toThrow(/has been stopped/)
+    expect(children).toHaveLength(0)
   })
 
   it('creates a client key first when none exists', async () => {

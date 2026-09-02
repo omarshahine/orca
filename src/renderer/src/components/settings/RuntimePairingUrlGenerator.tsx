@@ -309,6 +309,11 @@ export function RuntimePairingUrlGenerator({
   }
 
   const updateIntent = (nextIntent: RuntimePairingIntent): void => {
+    // Why: "This computer only" and Tailcat both advertise loopback, so the address alone cannot tell a
+    // stale link from a current one; a link is only current for the intent that generated it.
+    if (nextIntent !== intent) {
+      clearGeneratedUrls()
+    }
     setIntent(nextIntent)
     setSelectedAddress(
       selectRuntimePairingIntent(

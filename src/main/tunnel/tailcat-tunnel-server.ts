@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { runProcess, spawnProcess } from '../../shared/child-process/run-process'
 import { tailcatKeyPathArgument } from './tailcat-binary'
+import { guardChildStreams, terminateChild, type TailcatChild } from './tailcat-child-lifecycle'
 import { onProcessOutputLines } from './tailcat-process-output'
 import type { TailcatProcessRunner, TailcatProcessSpawner } from './tailcat-socks-proxy'
 import type { TailcatTunnelServerState } from '../../shared/tailcat-tunnel-status'
@@ -16,6 +17,7 @@ export type TailcatTunnelServerOptions = {
   logf?: (message: string) => void
   startTimeoutMs?: number
   restartDelaysMs?: readonly number[]
+  terminateGraceMs?: number
   onStateChange?: (state: TailcatTunnelServerState) => void
 }
 
@@ -24,15 +26,27 @@ const DEFAULT_START_TIMEOUT_MS = 30_000
 const KEYGEN_TIMEOUT_MS = 60_000
 const DEFAULT_RESTART_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
 
+export class TunnelServerCancelledError extends Error {
+  constructor() {
+    super('Tailcat tunnel server was stopped')
+    this.name = 'TunnelServerCancelledError'
+  }
+}
+
 /**
  * Supervises `tailcat serve <port>`, which reverse-proxies tunnel connections to the runtime's
  * loopback WebSocket port. The WebSocket listener itself never needs to leave loopback.
+ *
+ * Desired state is "a server for `port`" until `stop()`. Every launch carries a generation, so a
+ * stop or port change during startup cancels that launch instead of racing it, and retries keep
+ * going with backoff for as long as the server is still wanted.
  */
 export class TailcatTunnelServer {
-  private child: ReturnType<typeof spawnProcess> | null = null
+  private child: TailcatChild | null = null
   private token: string | null = null
   private port: number | null = null
   private state: TailcatTunnelServerState = 'stopped'
+  private generation = 0
   private restartTimer: NodeJS.Timeout | null = null
   private restartAttempt = 0
   private starting: Promise<string> | null = null
@@ -53,55 +67,65 @@ export class TailcatTunnelServer {
 
   /** Resolves with the address blob once tailcat is listening. Re-entrant while starting. */
   start(port: number): Promise<string> {
-    if (this.state === 'running' && this.token && this.port === port) {
-      return Promise.resolve(this.token)
+    if (this.port === port) {
+      if (this.state === 'running' && this.token) {
+        return Promise.resolve(this.token)
+      }
+      if (this.starting) {
+        return this.starting
+      }
     }
-    if (this.starting && this.port === port) {
-      return this.starting
-    }
+    // Why: a start inside a backoff window must own the relaunch, or two children race for the port.
+    this.clearRestartTimer()
     this.port = port
-    this.starting = this.launch().finally(() => {
-      this.starting = null
-    })
-    return this.starting
+    this.restartAttempt = 0
+    return this.launch(++this.generation)
   }
 
   async stop(): Promise<void> {
-    if (this.restartTimer) {
-      clearTimeout(this.restartTimer)
-      this.restartTimer = null
-    }
+    this.generation += 1
+    this.clearRestartTimer()
     const child = this.child
     this.child = null
     this.port = null
     this.setState('stopped')
-    if (child && child.exitCode === null && child.signalCode === null) {
-      await new Promise<void>((resolve) => {
-        child.once('exit', () => resolve())
-        child.kill()
-      })
+    if (child) {
+      await terminateChild(child, this.options.terminateGraceMs)
     }
   }
 
-  private async launch(): Promise<string> {
+  private launch(generation: number): Promise<string> {
+    const pending = this.launchAttempt(generation).finally(() => {
+      if (this.starting === pending) {
+        this.starting = null
+      }
+    })
+    this.starting = pending
+    return pending
+  }
+
+  private async launchAttempt(generation: number): Promise<string> {
     this.setState('starting')
     try {
       await this.ensureServerKey()
-      const token = await this.spawnServe()
+      this.assertCurrent(generation)
+      const token = await this.spawnServe(generation)
       this.restartAttempt = 0
       this.token = token
       this.setState('running')
       return token
     } catch (error) {
-      this.setState('failed')
+      if (this.isCurrent(generation)) {
+        this.scheduleRestart(generation, error)
+      }
       throw error
     }
   }
 
-  private spawnServe(): Promise<string> {
+  private spawnServe(generation: number): Promise<string> {
     const port = this.port
     if (port === null) {
-      return Promise.reject(new Error('Tailcat tunnel server has no port'))
+      return Promise.reject(new TunnelServerCancelledError())
     }
     const spawn = this.options.spawn ?? spawnProcess
     const child = spawn({
@@ -115,15 +139,17 @@ export class TailcatTunnelServer {
       ],
       timeoutMs: null
     })
+    guardChildStreams(child, this.options.logf)
     this.child = child
     return new Promise<string>((resolve, reject) => {
+      let settled = false
       const timeout = setTimeout(() => {
-        finish(new Error('Timed out waiting for tailcat serve to start'))
+        settle(new Error('Timed out waiting for tailcat serve to start'))
       }, this.options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS)
       const detachStdout = onProcessOutputLines(child.stdout, (line) => {
         const token = parseListenAddress(line)
         if (token) {
-          finish(null, token)
+          settle(null, token)
         }
       })
       const detachStderr = onProcessOutputLines(child.stderr, (line) => {
@@ -131,25 +157,29 @@ export class TailcatTunnelServer {
       })
       const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
         detachStderr()
-        if (this.child !== child) {
+        const error = new Error(`tailcat serve exited (${signal ?? code ?? 'unknown'})`)
+        if (this.child === child) {
+          this.child = null
+          if (settled && this.isCurrent(generation)) {
+            this.scheduleRestart(generation, error)
+          }
+        }
+        // Why: a launch cancelled by stop() must still settle, or its caller waits out the timeout.
+        settle(this.isCurrent(generation) ? error : new TunnelServerCancelledError())
+      }
+      const onError = (error: Error): void => settle(error)
+      const settle = (error: Error | null, token?: string): void => {
+        if (settled) {
           return
         }
-        this.child = null
-        const error = new Error(`tailcat serve exited (${signal ?? code ?? 'unknown'})`)
-        if (this.state === 'running') {
-          this.scheduleRestart(error)
-        }
-        finish(error)
-      }
-      const onError = (error: Error): void => finish(error)
-      const finish = (error: Error | null, token?: string): void => {
+        settled = true
         clearTimeout(timeout)
         detachStdout()
         child.off('error', onError)
         if (error) {
           if (this.child === child) {
             this.child = null
-            child.kill()
+            void terminateChild(child, this.options.terminateGraceMs)
           }
           reject(error)
           return
@@ -161,26 +191,42 @@ export class TailcatTunnelServer {
     })
   }
 
-  private scheduleRestart(error: Error): void {
+  private scheduleRestart(generation: number, error: unknown): void {
+    if (this.restartTimer) {
+      return
+    }
     const delays = this.options.restartDelaysMs ?? DEFAULT_RESTART_DELAYS_MS
     const delay = delays[Math.min(this.restartAttempt, delays.length - 1)] ?? 0
     this.restartAttempt += 1
-    this.options.logf?.(`[tailcat serve] ${error.message}; restarting in ${delay}ms`)
+    const message = error instanceof Error ? error.message : String(error)
+    this.options.logf?.(`[tailcat serve] ${message}; restarting in ${delay}ms`)
     this.setState('starting')
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null
-      if (this.port === null) {
+      if (!this.isCurrent(generation)) {
         return
       }
-      this.starting = this.launch()
-        .catch(() => {
-          // Why: a failed relaunch is already logged; the next exit handler or stop() owns the state.
-        })
-        .then(() => this.token ?? '')
-        .finally(() => {
-          this.starting = null
-        })
+      this.launch(generation).catch(() => {
+        // Why: the attempt logs its own failure and has already queued the next retry.
+      })
     }, delay)
+  }
+
+  private clearRestartTimer(): void {
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer)
+      this.restartTimer = null
+    }
+  }
+
+  private isCurrent(generation: number): boolean {
+    return generation === this.generation && this.port !== null
+  }
+
+  private assertCurrent(generation: number): void {
+    if (!this.isCurrent(generation)) {
+      throw new TunnelServerCancelledError()
+    }
   }
 
   private async ensureServerKey(): Promise<void> {
