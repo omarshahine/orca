@@ -13,6 +13,8 @@ import {
   setRemoteRuntimeTunnelDialer
 } from './remote-runtime-tunnel-dialer'
 import { RemoteRuntimeClientError } from './remote-runtime-client-error'
+import { sendRemoteRuntimeRequest } from './remote-runtime-client'
+import { subscribeRemoteRuntimeTransport } from './remote-runtime-subscription-transport'
 
 const tunnel = { v: 1 as const, kind: 'tailcat' as const, token: 'tcTOKEN', port: 6768 }
 
@@ -105,19 +107,69 @@ describe('createRemoteRuntimeWebSocket', () => {
     setRemoteRuntimeTunnelDialer(null)
   })
 
-  it('attaches the tunnel agent for every caller, keeping their own socket options', () => {
-    setRemoteRuntimeTunnelDialer(async () => {
-      throw new Error('not dialed in this test')
-    })
-    const ws = createRemoteRuntimeWebSocket(pairingOffer('ws://192.0.2.1:1'), { maxPayload: 7 })
-    const options = (ws as unknown as { _req?: { agent?: unknown } })._req
-    expect(options?.agent).toBeInstanceOf(RemoteRuntimeTunnelAgent)
-    ws.terminate()
+  it('attaches the tunnel agent for every caller, keeping their own socket options', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()))
+    const serverPort = (server.address() as AddressInfo).port
+    server.on('connection', (socket) => socket.send('x'.repeat(20)))
+    setRemoteRuntimeTunnelDialer(async () => connect({ host: '127.0.0.1', port: serverPort }))
+    try {
+      const ws = createRemoteRuntimeWebSocket(pairingOffer('ws://192.0.2.1:1'), { maxPayload: 7 })
+      const request = (ws as unknown as { _req?: { agent?: unknown } })._req
+      expect(request?.agent).toBeInstanceOf(RemoteRuntimeTunnelAgent)
+      // Why: a 20-byte frame against maxPayload 7 must be refused, proving the option survived.
+      const failure = await new Promise<string>((resolve) => {
+        ws.once('error', (error) => resolve(error.message))
+        ws.once('close', (code) => resolve(`closed ${code}`))
+      })
+      expect(failure).toBe('Max payload size exceeded')
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
   })
 
   it('throws a client error when the only fallback is loopback and no dialer exists', () => {
-    expect(() => createRemoteRuntimeWebSocket(pairingOffer('ws://127.0.0.1:6768'))).toThrow(
-      RemoteRuntimeClientError
-    )
+    let thrown: unknown
+    try {
+      createRemoteRuntimeWebSocket(pairingOffer('ws://127.0.0.1:6768'))
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(RemoteRuntimeClientError)
+    expect((thrown as RemoteRuntimeClientError).code).toBe('remote_runtime_unavailable')
+    expect((thrown as RemoteRuntimeClientError).message).toBe(TUNNEL_DIALER_UNAVAILABLE_MESSAGE)
+  })
+
+  // Why: these two paths once built their own sockets and dialed a tunnel-only host directly.
+  it('is what one-shot requests and subscriptions dial through', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+    await new Promise<void>((resolve) => server.once('listening', () => resolve()))
+    const serverPort = (server.address() as AddressInfo).port
+    server.on('connection', (socket) => socket.close())
+    const dialed: string[] = []
+    setRemoteRuntimeTunnelDialer(async (requested) => {
+      dialed.push(requested.token)
+      return connect({ host: '127.0.0.1', port: serverPort })
+    })
+    try {
+      await expect(
+        sendRemoteRuntimeRequest(pairingOffer('ws://192.0.2.1:1'), 'status.get', undefined, 5_000)
+      ).rejects.toBeInstanceOf(RemoteRuntimeClientError)
+      await expect(
+        subscribeRemoteRuntimeTransport(
+          pairingOffer('ws://192.0.2.1:1'),
+          'status.get',
+          undefined,
+          5_000,
+          {
+            onResponse: () => {},
+            onError: () => {}
+          }
+        )
+      ).rejects.toBeInstanceOf(RemoteRuntimeClientError)
+      expect(dialed).toEqual(['tcTOKEN', 'tcTOKEN'])
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
   })
 })

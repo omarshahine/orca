@@ -14,6 +14,8 @@ import { resolveTailcatBinary } from '../../src/main/tunnel/tailcat-binary'
 
 // Why: runs only where the tailcat CLI is installed; it bootstraps through Tailcat's public relay.
 test.skip(resolveTailcatBinary() === null, 'tailcat CLI not installed')
+// Why: the process census below uses pgrep, which Windows does not have.
+test.skip(process.platform === 'win32', 'process census uses pgrep')
 
 function tailcatProcesses(): string[] {
   try {
@@ -34,25 +36,27 @@ test('a paired desktop client reaches a --tailcat serve host only through the tu
     pairingAddress: '192.0.2.1',
     extraServeArgs: ['--serve-tailcat']
   })
-  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-tailcat-client-'))
-  writeFileSync(
-    path.join(userDataDir, 'orca-data.json'),
-    `${JSON.stringify(getE2ECompletedOnboardingProfile(), null, 2)}\n`
-  )
-  const { ELECTRON_RUN_AS_NODE: _unused, ...cleanEnv } = process.env
-  void _unused
-  const isolation = createElectronHomeIsolation({
-    inheritedEnv: cleanEnv,
-    launchEnv: {},
-    extraEnv: {},
-    userDataDir
-  })
-  const app = await electron.launch({
-    args: getOrcaElectronLaunchArgs(path.join(process.cwd(), 'out', 'main', 'index.js'), false),
-    env: { ...isolation.env, NODE_ENV: 'development', ORCA_E2E_HEADLESS: '1' }
-  })
-  forwardElectronProcessLogs(app, testInfo)
+  let app: Awaited<ReturnType<typeof electron.launch>> | null = null
+  let userDataDir: string | null = null
   try {
+    userDataDir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-tailcat-client-'))
+    writeFileSync(
+      path.join(userDataDir, 'orca-data.json'),
+      `${JSON.stringify(getE2ECompletedOnboardingProfile(), null, 2)}\n`
+    )
+    const { ELECTRON_RUN_AS_NODE: _unused, ...cleanEnv } = process.env
+    void _unused
+    const isolation = createElectronHomeIsolation({
+      inheritedEnv: cleanEnv,
+      launchEnv: {},
+      extraEnv: {},
+      userDataDir
+    })
+    app = await electron.launch({
+      args: getOrcaElectronLaunchArgs(path.join(process.cwd(), 'out', 'main', 'index.js'), false),
+      env: { ...isolation.env, NODE_ENV: 'development', ORCA_E2E_HEADLESS: '1' }
+    })
+    forwardElectronProcessLogs(app, testInfo)
     const offer = decodePairingOffer(host.offer.pairingUrl)
     expect(offer.endpoint).toBe(`ws://192.0.2.1:${new URL(offer.endpoint).port}`)
     expect(offer.tunnel).toMatchObject({ v: 1, kind: 'tailcat' })
@@ -104,9 +108,14 @@ test('a paired desktop client reaches a --tailcat serve host only through the tu
     console.log(`[tailcat-e2e] second status after ${Date.now() - secondAt}ms ok=${again.ok}`)
     expect(again.ok).toBe(true)
   } finally {
-    await closeElectronAppForE2E(app)
-    await cleanupE2EDaemons(userDataDir)
-    rmSync(userDataDir, { recursive: true, force: true })
+    // Why: the host owns a tailcat child, so it must be disposed even when the client never launched.
+    if (app) {
+      await closeElectronAppForE2E(app)
+    }
+    if (userDataDir) {
+      await cleanupE2EDaemons(userDataDir)
+      rmSync(userDataDir, { recursive: true, force: true })
+    }
     await host.dispose()
   }
   // Why: quitting either side must take its tailcat child with it.
