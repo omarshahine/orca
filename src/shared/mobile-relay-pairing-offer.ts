@@ -8,6 +8,9 @@ import {
 } from './mobile-pairing-protocol-limits'
 
 export const PAIRING_OFFER_VERSION = 2
+// Why: a tunnel offer must fail closed on clients that predate tunnels; they accept only v2 and
+// would otherwise strip the tunnel and dial the fallback address.
+export const PAIRING_OFFER_TUNNEL_VERSION = 3
 const PairingScopeSchema = z.enum(['mobile', 'runtime'])
 const BASE64URL_16_PATTERN = /^[A-Za-z0-9_-]{16}$/
 const BASE64URL_43_PATTERN = /^[A-Za-z0-9_-]{43}$/
@@ -86,7 +89,7 @@ export function createPairingOfferSchema(now: () => number = () => Date.now()) {
 
   return z
     .object({
-      v: z.literal(PAIRING_OFFER_VERSION),
+      v: z.union([z.literal(PAIRING_OFFER_VERSION), z.literal(PAIRING_OFFER_TUNNEL_VERSION)]),
       endpoint: z.string().min(1).max(PAIRING_ENDPOINT_MAX_CHARACTERS),
       deviceToken: z.string().min(1).max(PAIRING_DEVICE_TOKEN_MAX_CHARACTERS),
       // Why: the desktop's Curve25519 public key is pinned by the pairing
@@ -99,6 +102,13 @@ export function createPairingOfferSchema(now: () => number = () => Date.now()) {
       tunnel: PairingTunnelSchema.optional()
     })
     .superRefine((offer, ctx) => {
+      if ((offer.v === PAIRING_OFFER_TUNNEL_VERSION) !== (offer.tunnel !== undefined)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tunnel'],
+          message: `Tunnel offers use pairing version ${PAIRING_OFFER_TUNNEL_VERSION} and only they do`
+        })
+      }
       if (offer.relay && offer.scope === 'runtime') {
         // Why: relay v1 is mobile-only; accepting it on runtime offers would
         // imply routing and credential support that client does not have.

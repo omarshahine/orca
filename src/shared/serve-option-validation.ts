@@ -6,6 +6,7 @@ export type ServeOptionValidationInput = {
   recipeJson: boolean
   projectRoot: string | null | undefined
   tailcat?: boolean
+  wsPort?: number
 }
 
 export function getServeOptionValidationError(options: ServeOptionValidationInput): string | null {
@@ -14,6 +15,12 @@ export function getServeOptionValidationError(options: ServeOptionValidationInpu
   }
   if (options.tailcat && options.noPairing) {
     return 'A tailcat tunnel is only reachable through a pairing offer; remove --no-pairing.'
+  }
+  if (options.tailcat && options.mobilePairing) {
+    return 'Orca Mobile cannot dial a Tailcat tunnel yet; remove --mobile-pairing or --tailcat.'
+  }
+  if (options.tailcat && options.wsPort === 0) {
+    return 'A Tailcat tunnel needs a stable port; pass --port with a nonzero value.'
   }
   if (options.recipeJson && options.noPairing) {
     return 'Recipe JSON output requires runtime pairing; remove --no-pairing.'

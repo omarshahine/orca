@@ -1,8 +1,10 @@
 import { z } from 'zod'
 import { PAIRING_OFFER_VERSION, type PairingOffer } from './pairing'
-import { PairingTunnelSchema } from './mobile-relay-pairing-offer'
+import { PAIRING_OFFER_TUNNEL_VERSION, PairingTunnelSchema } from './mobile-relay-pairing-offer'
 
-export const RuntimeAccessEndpointSchema = z.object({
+// Why loose: a newer Orca may persist endpoint fields this build does not know; a read-modify-write
+// must carry them through instead of silently erasing them.
+export const RuntimeAccessEndpointSchema = z.looseObject({
   id: z.string().min(1),
   kind: z.literal('websocket'),
   label: z.string().min(1),
@@ -57,10 +59,25 @@ export function redactRuntimeEnvironment(
   }
 }
 
+// Why: version 2 marks a store holding tunnel endpoints. Builds that predate tunnels accept only
+// version 1 and refuse the file, which beats reading it, dropping the tunnel, and writing it back.
+export const RUNTIME_ENVIRONMENT_STORE_VERSION = 1
+export const RUNTIME_ENVIRONMENT_STORE_TUNNEL_VERSION = 2
 export const RuntimeEnvironmentStoreSchema = z.object({
-  version: z.literal(1),
+  version: z.union([
+    z.literal(RUNTIME_ENVIRONMENT_STORE_VERSION),
+    z.literal(RUNTIME_ENVIRONMENT_STORE_TUNNEL_VERSION)
+  ]),
   environments: z.array(KnownRuntimeEnvironmentSchema)
 })
+
+export function runtimeEnvironmentStoreVersionFor(
+  environments: readonly KnownRuntimeEnvironment[]
+): 1 | 2 {
+  return environments.some((environment) => environment.endpoints.some((entry) => entry.tunnel))
+    ? RUNTIME_ENVIRONMENT_STORE_TUNNEL_VERSION
+    : RUNTIME_ENVIRONMENT_STORE_VERSION
+}
 
 export type RuntimeEnvironmentStore = z.infer<typeof RuntimeEnvironmentStoreSchema>
 
@@ -120,7 +137,7 @@ export function getPreferredPairingOffer(environment: KnownRuntimeEnvironment): 
     throw new Error(`Environment ${environment.name} has no access endpoints`)
   }
   return {
-    v: PAIRING_OFFER_VERSION,
+    v: endpoint.tunnel ? PAIRING_OFFER_TUNNEL_VERSION : PAIRING_OFFER_VERSION,
     endpoint: endpoint.endpoint,
     deviceToken: endpoint.deviceToken,
     publicKeyB64: endpoint.publicKeyB64,

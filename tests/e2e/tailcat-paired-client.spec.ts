@@ -32,8 +32,10 @@ test('a paired desktop client reaches a --tailcat serve host only through the tu
   test.setTimeout(300_000)
   const before = tailcatProcesses()
   // Why 192.0.2.1: TEST-NET is unroutable, so a direct dial to the advertised endpoint cannot succeed.
+  // Why pinned: a tunnel serve refuses `--port 0`, since every link embeds the port.
   const host = await launchHeadlessPairedRuntimeHost({
     pairingAddress: '192.0.2.1',
+    pinnedServePort: true,
     extraServeArgs: ['--serve-tailcat']
   })
   let app: Awaited<ReturnType<typeof electron.launch>> | null = null
@@ -73,12 +75,21 @@ test('a paired desktop client reaches a --tailcat serve host only through the tu
         timeout: 60_000
       }
     )
-    const added = await page.evaluate(
+    // Why: the production add path dials the host to verify it before saving; that dial must use the tunnel.
+    const verified = await page.evaluate(
       (pairingCode) =>
-        window.api.runtimeEnvironments.addFromPairingCode({ name: 'Tailcat host', pairingCode }),
+        window.api.runtimeEnvironments.verifyAndAddFromPairingCode({
+          name: 'Tailcat host',
+          pairingCode
+        }),
       host.offer.pairingUrl
     )
-    const environment = added.environment
+    console.log(`[tailcat-e2e] verifyAndAdd: ${JSON.stringify(verified).slice(0, 300)}`)
+    expect(verified.ok).toBe(true)
+    if (!verified.ok) {
+      return
+    }
+    const environment = verified.environment
     console.log(
       `[tailcat-e2e] saved environment: dependency=${environment.connectionDependency} tunnel=${JSON.stringify(environment.endpoints[0]?.tunnel)}`
     )

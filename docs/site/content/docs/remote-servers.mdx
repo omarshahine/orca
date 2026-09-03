@@ -186,6 +186,12 @@ CLI. The runtime's WebSocket listener stays on loopback; only the tunnel reaches
 persistent Tailcat key under its data directory, so the link survives restarts, and it restarts the tunnel
 on launch while any Tailcat link is still granted.
 
+Tailcat links pin the runtime port, so `orca serve --tailcat` binds exactly `--port` (default 6768) or
+fails rather than moving to another port. Orca checks the installed `tailcat` before using it and needs
+release 0.4 or newer. Only the Orca desktop app can open a Tailcat link today: Orca Mobile and the
+browser client refuse it, and `--tailcat` cannot be combined with `--mobile-pairing`. Orca versions
+that predate Tailcat refuse the link as invalid instead of dialing an unreachable address.
+
 <Callout title="Trust boundary">
   The Tailcat address in the link is a bearer capability: anyone holding the link can reach the
   tunnel, and the E2EE device token then decides whether they get in. Revoking the grant is what

@@ -2,11 +2,14 @@ import { mkdirSync } from 'node:fs'
 import type { Socket } from 'node:net'
 import { join } from 'node:path'
 import type { PairingTunnel } from '../../shared/mobile-relay-pairing-offer'
-import type { RuntimeTunnelAdvertiser } from '../runtime/runtime-rpc/runtime-rpc-pairing-types'
 import { resolveTailcatBinary, TAILCAT_INSTALL_HINT } from './tailcat-binary'
 import { TailcatSocksProxy } from './tailcat-socks-proxy'
+import { probeTailcatBinary, type TailcatCompatibility } from './tailcat-compatibility'
 import { TailcatTunnelServer } from './tailcat-tunnel-server'
-import type { TailcatTunnelStatus } from '../../shared/tailcat-tunnel-status'
+import type {
+  RuntimeTunnelAdvertiser,
+  TailcatTunnelStatus
+} from '../../shared/tailcat-tunnel-status'
 
 export type TailcatTunnelServiceOptions = {
   userDataPath: string
@@ -27,6 +30,8 @@ export class TailcatTunnelService implements RuntimeTunnelAdvertiser {
   private readonly stateDirectory: string
   private readonly resolveBinary: () => string | null
   private binaryPath: string | null | undefined
+  private compatibility: { binary: string; result: TailcatCompatibility } | null = null
+  private probing: Promise<TailcatCompatibility> | null = null
   private server: TailcatTunnelServer | null = null
   private proxy: TailcatSocksProxy | null = null
 
@@ -43,12 +48,16 @@ export class TailcatTunnelService implements RuntimeTunnelAdvertiser {
     return this.binaryPath
   }
 
-  getStatus(): TailcatTunnelStatus {
+  async getStatus(): Promise<TailcatTunnelStatus> {
     const binaryPath = this.getBinaryPath()
+    const compatibility = binaryPath ? await this.getCompatibility(binaryPath) : null
     return {
       installed: binaryPath !== null,
       binaryPath,
       installHint: TAILCAT_INSTALL_HINT,
+      compatible: compatibility ? compatibility.ok : null,
+      version: compatibility?.version ?? null,
+      incompatibleReason: compatibility && !compatibility.ok ? compatibility.reason : null,
       server: {
         state: this.server?.getState() ?? 'stopped',
         port: this.server?.getPort() ?? null
@@ -56,12 +65,42 @@ export class TailcatTunnelService implements RuntimeTunnelAdvertiser {
     }
   }
 
-  /** Starts (or reuses) the tunnel server for the runtime's WebSocket port and returns its address blob. */
-  async ensureServer(port: number): Promise<string> {
+  /**
+   * Why probe and not trust the name: any executable called `tailcat` is found on PATH, and releases
+   * before 0.4 use a different command syntax that would only surface as supervisor restart loops.
+   */
+  private getCompatibility(binary: string): Promise<TailcatCompatibility> {
+    if (this.compatibility?.binary === binary) {
+      return Promise.resolve(this.compatibility.result)
+    }
+    if (!this.probing) {
+      this.probing = probeTailcatBinary(binary)
+        .then((result) => {
+          this.compatibility = { binary, result }
+          return result
+        })
+        .finally(() => {
+          this.probing = null
+        })
+    }
+    return this.probing
+  }
+
+  private async requireUsableBinary(): Promise<string> {
     const binary = this.getBinaryPath()
     if (!binary) {
       throw new Error(TAILCAT_INSTALL_HINT)
     }
+    const compatibility = await this.getCompatibility(binary)
+    if (!compatibility.ok) {
+      throw new Error(compatibility.reason)
+    }
+    return binary
+  }
+
+  /** Starts (or reuses) the tunnel server for the runtime's WebSocket port and returns its address blob. */
+  async ensureServer(port: number): Promise<string> {
+    const binary = await this.requireUsableBinary()
     if (this.server && this.server.getPort() !== null && this.server.getPort() !== port) {
       await this.server.stop()
       this.server = null
@@ -87,10 +126,7 @@ export class TailcatTunnelService implements RuntimeTunnelAdvertiser {
 
   /** Dials another host's tunnel; used as the process-wide remote runtime tunnel dialer. */
   dial = async (tunnel: PairingTunnel): Promise<Socket> => {
-    const binary = this.getBinaryPath()
-    if (!binary) {
-      throw new Error(TAILCAT_INSTALL_HINT)
-    }
+    const binary = await this.requireUsableBinary()
     if (!this.proxy) {
       mkdirSync(this.stateDirectory, { recursive: true, mode: 0o700 })
       this.proxy = new TailcatSocksProxy({

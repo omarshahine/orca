@@ -7,7 +7,10 @@ import type {
   RelayRevokeOutboxItem
 } from '../relay/relay-revoke-outbox'
 import { encodePairingOffer, PAIRING_OFFER_VERSION } from '../../../shared/pairing'
-import type { PairingTunnel } from '../../../shared/mobile-relay-pairing-offer'
+import {
+  PAIRING_OFFER_TUNNEL_VERSION,
+  type PairingTunnel
+} from '../../../shared/mobile-relay-pairing-offer'
 import type { RuntimePairingReach } from '../../../shared/runtime-pairing-reach'
 import { resolveAdvertisedPairingEndpoint } from '../pairing-endpoint'
 import { RuntimeRpcNetworkExposure } from './runtime-rpc-network-exposure'
@@ -185,7 +188,7 @@ export class RuntimeRpcPairing extends RuntimeRpcNetworkExposure {
       return pairingUnavailable('device_registry_unavailable', DEVICE_REGISTRY_UNAVAILABLE_GUIDANCE)
     }
     const pairingUrl = encodePairingOffer({
-      v: PAIRING_OFFER_VERSION,
+      v: tunnel ? PAIRING_OFFER_TUNNEL_VERSION : PAIRING_OFFER_VERSION,
       endpoint,
       deviceToken: device.token,
       publicKeyB64,
@@ -198,8 +201,11 @@ export class RuntimeRpcPairing extends RuntimeRpcNetworkExposure {
       pairingUrl,
       endpoint,
       deviceId: device.deviceId,
+      // Why: a browser cannot dial a tunnel, so a tunnel link never advertises a web client URL.
       webClientUrl:
-        this.webClientRoot && scope === 'runtime' ? createWebClientUrl(endpoint, pairingUrl) : null
+        this.webClientRoot && scope === 'runtime' && !tunnel
+          ? createWebClientUrl(endpoint, pairingUrl)
+          : null
     }
   }
 

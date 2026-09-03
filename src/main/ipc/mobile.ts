@@ -150,7 +150,7 @@ export function registerMobileHandlers(
     }
   )
 
-  ipcMain.handle('tunnel:getStatus', () =>
+  ipcMain.handle('tunnel:getStatus', async () =>
     getTailcatTunnelService(getCanonicalUserDataPath()).getStatus()
   )
 
@@ -243,8 +243,7 @@ export function registerMobileHandlers(
       return {
         available: true as const,
         pairingUrl: offer.pairingUrl,
-        // Why: a browser cannot dial a tailcat tunnel, so its loopback web URL would only mislead.
-        webClientUrl: args?.transport === 'tailcat' ? null : offer.webClientUrl,
+        webClientUrl: offer.webClientUrl,
         endpoint: offer.endpoint,
         deviceId: offer.deviceId
       }

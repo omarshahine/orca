@@ -1,19 +1,9 @@
 import type { OrcaRuntimeRpcServer } from '../runtime/runtime-rpc'
 import { setRemoteRuntimeTunnelDialer } from '../../shared/remote-runtime-tunnel-dialer'
-import { TailcatTunnelService } from './tailcat-tunnel-service'
+import type { TailcatTunnelService } from './tailcat-tunnel-service'
+import { getTailcatTunnelService } from './tailcat-tunnel-dialer-registration'
 
-let service: TailcatTunnelService | null = null
-
-/** One tunnel service per host process, shared by the RPC server, the IPC layer and remote dials. */
-export function getTailcatTunnelService(userDataPath: string): TailcatTunnelService {
-  if (!service) {
-    service = new TailcatTunnelService({
-      userDataPath,
-      logf: (message) => console.log(`[tunnel] ${message}`)
-    })
-  }
-  return service
-}
+export { disposeTailcatTunnel, getTailcatTunnelService } from './tailcat-tunnel-dialer-registration'
 
 /**
  * Hooks the tunnel into a started RPC server: offers can embed the token, remote dials go through
@@ -37,13 +27,6 @@ export async function attachTailcatTunnel(
     }
   }
   return tunnel
-}
-
-export async function disposeTailcatTunnel(): Promise<void> {
-  const current = service
-  service = null
-  setRemoteRuntimeTunnelDialer(null)
-  await current?.stop()
 }
 
 export function boundWebSocketPort(rpc: OrcaRuntimeRpcServer): number | null {

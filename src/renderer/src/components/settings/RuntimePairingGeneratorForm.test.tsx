@@ -74,6 +74,9 @@ describe('RuntimePairingGeneratorForm', () => {
       installed: false,
       binaryPath: null,
       installHint: 'Install the tailcat CLI.',
+      compatible: null,
+      version: null,
+      incompatibleReason: null,
       server: { state: 'stopped', port: null }
     })
     expect(missing).toContain('role="alert"')
@@ -85,6 +88,9 @@ describe('RuntimePairingGeneratorForm', () => {
       installed: true,
       binaryPath: '/opt/homebrew/bin/tailcat',
       installHint: 'Install the tailcat CLI.',
+      compatible: true,
+      version: 'v0.4.0',
+      incompatibleReason: null,
       server: { state: 'running', port: 6768 }
     })
     expect(installed).not.toContain('role="alert"')

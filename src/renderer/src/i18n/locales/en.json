@@ -329,7 +329,8 @@
         "loopbackPairingBlocked": "This access link points back to this device.",
         "remotePairingUnreachable": "Cannot reach Orca at {{endpoint}}.",
         "remotePairingInvalidDetails": "This access link contains invalid connection details.",
-        "remotePairingSaveFailed": "Orca verified the host but could not save it. Check browser storage and try again."
+        "remotePairingSaveFailed": "Orca verified the host but could not save it. Check browser storage and try again.",
+        "tunnelPairingUnsupported": "This link uses a Tailcat tunnel, which a browser cannot dial. Add it from the Orca desktop app instead."
       },
       "web": {
         "preload": {
@@ -8063,7 +8064,8 @@
           "tunnelRunning": "Tunnel running.",
           "tunnelStarting": "Tunnel starting…",
           "tunnelFailed": "The tunnel failed to start. Generating a link tries again.",
-          "tunnelIdle": "The tunnel starts when you generate a link."
+          "tunnelIdle": "The tunnel starts when you generate a link.",
+          "tunnelIncompatible": "This tailcat build cannot be used: {{reason}}"
         },
         "Settings": {
           "3bf149e873": "Project Settings > {{value0}}",

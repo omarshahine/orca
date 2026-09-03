@@ -31,6 +31,14 @@ export function RuntimePairingTunnelPanel({
             { hint: status.installHint }
           )}
         </p>
+      ) : status.compatible === false ? (
+        <p role="alert" className="mt-1 text-destructive">
+          {translate(
+            'auto.components.settings.RuntimePairingUrlGenerator.tunnelIncompatible',
+            'This tailcat build cannot be used: {{reason}}',
+            { reason: status.incompatibleReason ?? '' }
+          )}
+        </p>
       ) : (
         <>
           <p className="mt-1 text-muted-foreground">

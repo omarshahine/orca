@@ -152,7 +152,6 @@ describe('TailcatTunnelServer', () => {
       `--key=${tailcatKeyPathArgument(keyPath)}`,
       '--json',
       'serve',
-      '--full-address',
       '6768'
     ])
     child.stdout.write('{"listenAddr":"tcTOKEN"}\n')

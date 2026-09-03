@@ -15,6 +15,7 @@ import { OffscreenBrowserBackend } from '../browser/offscreen-browser-backend'
 import { browserManager } from '../browser/browser-manager'
 import { DesktopRelayService } from '../runtime/relay/desktop-relay-service'
 import { attachTailcatTunnel } from '../tunnel/tailcat-tunnel-host'
+import { DEFAULT_WS_PORT } from '../runtime/runtime-rpc/runtime-rpc-pairing-types'
 import { getServeOptions, getBundledWebClientRoot, printServeReady } from './main-process-serve'
 import {
   bindTerminalRuntimeStartupServices,
@@ -91,6 +92,14 @@ function installRuntimeRpc(
           wsPort: serveOptions.wsPort,
           // Why: only explicit `orca serve --port` overrides a stale STA-1511 fallback (issue #8535); default/dev stay fallback-first for pairing stability.
           preferPinnedWsPort: true
+        }
+      : {}),
+    // Why: every Tailcat link embeds the port, so a tunnel serve binds exactly one port or fails.
+    ...(serveOptions?.tailcat
+      ? {
+          wsPort: serveOptions.wsPort ?? DEFAULT_WS_PORT,
+          preferPinnedWsPort: true,
+          requirePinnedWsPort: true
         }
       : {}),
     webClientRoot: getBundledWebClientRoot()

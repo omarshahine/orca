@@ -38,7 +38,8 @@ describe('mobile:getRuntimePairingUrl with a Tailcat transport', () => {
     const createPairingOffer = vi.fn().mockReturnValue({
       available: true,
       pairingUrl: 'orca://pair#tunnel',
-      webClientUrl: 'http://127.0.0.1:6768/web-index.html?pairing=tunnel',
+      // Why: createPairingOffer itself withholds the web URL for tunnel links.
+      webClientUrl: null,
       endpoint: 'ws://127.0.0.1:6768',
       deviceId: 'runtime-2'
     })
@@ -54,7 +55,6 @@ describe('mobile:getRuntimePairingUrl with a Tailcat transport', () => {
     ).resolves.toEqual({
       available: true,
       pairingUrl: 'orca://pair#tunnel',
-      // Why: a browser cannot dial the tunnel, so no web URL is offered for it.
       webClientUrl: null,
       endpoint: 'ws://127.0.0.1:6768',
       deviceId: 'runtime-2'

@@ -12,6 +12,7 @@ import {
   getPreferredPairingOffer,
   KnownRuntimeEnvironmentSchema,
   RuntimeEnvironmentStoreSchema,
+  runtimeEnvironmentStoreVersionFor,
   type KnownRuntimeEnvironment,
   type RuntimeEnvironmentSource,
   type RuntimeEnvironmentStore,
@@ -76,24 +77,22 @@ export function addEnvironmentFromPairingCode(
     ...(args.source ? { source: args.source } : {}),
     ...getPairingConnectionDependency(args.connectionDependency, offer)
   })
-  const next = {
-    version: 1 as const,
-    environments: [
-      ...store.environments.filter((entry) => entry.id !== environment.id),
-      environment
-    ].sort((a, b) => a.name.localeCompare(b.name))
-  }
-  writeEnvironmentStore(userDataPath, next)
+  writeEnvironmentStore(
+    userDataPath,
+    [...store.environments.filter((entry) => entry.id !== environment.id), environment].sort(
+      (a, b) => a.name.localeCompare(b.name)
+    )
+  )
   return environment
 }
 
 export function removeEnvironment(userDataPath: string, selector: string): KnownRuntimeEnvironment {
   const store = readEnvironmentStore(userDataPath)
   const environment = resolveEnvironmentFromStore(store, selector)
-  writeEnvironmentStore(userDataPath, {
-    version: 1,
-    environments: store.environments.filter((entry) => entry.id !== environment.id)
-  })
+  writeEnvironmentStore(
+    userDataPath,
+    store.environments.filter((entry) => entry.id !== environment.id)
+  )
   return environment
 }
 
@@ -129,12 +128,12 @@ export function updateEnvironmentFromPairingCode(
     pairingRevision: Math.max(now, previousPairingRevision + 1),
     lastUsedAt: existing.lastUsedAt
   }
-  writeEnvironmentStore(userDataPath, {
-    version: 1,
-    environments: store.environments
+  writeEnvironmentStore(
+    userDataPath,
+    store.environments
       .map((entry) => (entry.id === existing.id ? next : entry))
       .sort((a, b) => a.name.localeCompare(b.name))
-  })
+  )
   return next
 }
 
@@ -207,7 +206,7 @@ export function markEnvironmentUsed(
         }
       : entry
   )
-  writeEnvironmentStore(userDataPath, { version: 1, environments: next })
+  writeEnvironmentStore(userDataPath, next)
 }
 
 function resolveEnvironmentFromStore(
@@ -245,12 +244,10 @@ function readEnvironmentStore(userDataPath: string): RuntimeEnvironmentStore {
         )
       )
     )
-    return {
-      version: 1,
-      environments: parsed.environments
-        .map((entry) => KnownRuntimeEnvironmentSchema.parse(entry))
-        .sort((a, b) => a.name.localeCompare(b.name))
-    }
+    const environments = parsed.environments
+      .map((entry) => KnownRuntimeEnvironmentSchema.parse(entry))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return { version: runtimeEnvironmentStoreVersionFor(environments), environments }
   } catch {
     throw new RuntimeEnvironmentStoreError(
       'runtime_error',
@@ -259,8 +256,15 @@ function readEnvironmentStore(userDataPath: string): RuntimeEnvironmentStore {
   }
 }
 
-function writeEnvironmentStore(userDataPath: string, store: RuntimeEnvironmentStore): void {
+function writeEnvironmentStore(
+  userDataPath: string,
+  environments: readonly KnownRuntimeEnvironment[]
+): void {
   const path = getEnvironmentStorePath(userDataPath)
+  const store: RuntimeEnvironmentStore = {
+    version: runtimeEnvironmentStoreVersionFor(environments),
+    environments: [...environments]
+  }
   try {
     writeSecureJsonFileWithinLimit(
       path,

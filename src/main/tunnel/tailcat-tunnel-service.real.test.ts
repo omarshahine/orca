@@ -41,8 +41,15 @@ describe.skipIf(!binary)('TailcatTunnelService with the real tailcat CLI', () =>
     cleanups.push(() => host.stop())
     cleanups.push(() => client.stop())
 
+    // Why: the behavioral probe must pass on a real 0.4 CLI before any child is supervised.
+    const status = await host.getStatus()
+    expect(status).toMatchObject({ installed: true, compatible: true, incompatibleReason: null })
+    expect(status.version).toMatch(/^v?\d+\.\d+/)
+
     const token = await host.ensureServer(port)
     expect(token.startsWith('tc')).toBe(true)
+    // Why: the short token must fit the SOCKS5 domain field the client dials it through.
+    expect(token.length).toBeLessThanOrEqual(255)
     expect(host.getPairingTunnel(port)).toEqual({ v: 1, kind: 'tailcat', token })
     // Why: the same key must yield the same token, or pairing links would die with every restart.
     await host.stopServer()

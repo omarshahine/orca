@@ -59,7 +59,7 @@ export function RuntimePairingGeneratorForm({
   const customAddressResult =
     intent === 'custom' ? parseServerShareAddress(selectedAddress) : { ok: true as const }
   const customAddressInvalid = selectedAddress !== '' && !customAddressResult.ok
-  const tunnelReady = tunnelStatus?.installed === true
+  const tunnelReady = tunnelStatus?.installed === true && tunnelStatus.compatible !== false
   const canGenerate =
     selectedAddress !== '' &&
     (intent !== 'custom' || customAddressResult.ok) &&

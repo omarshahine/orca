@@ -137,11 +137,12 @@ export class TailcatTunnelServer {
     const spawn = this.options.spawn ?? spawnProcess
     const child = spawn({
       program: this.options.binary,
+      // Why: the short token references a relay region; the expanded form embeds relay nodes,
+      // outgrows the SOCKS5 domain-name field, and goes stale when relay nodes rotate.
       args: [
         `--key=${tailcatKeyPathArgument(this.options.keyPath)}`,
         '--json',
         'serve',
-        '--full-address',
         String(port)
       ],
       timeoutMs: null

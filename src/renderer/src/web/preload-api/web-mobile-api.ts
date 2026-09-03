@@ -16,6 +16,9 @@ export function createWebMobileApi(): Partial<PreloadApi> {
           installed: false,
           binaryPath: null,
           installHint: '',
+          compatible: null,
+          version: null,
+          incompatibleReason: null,
           server: { state: 'stopped' as const, port: null }
         }),
       listDevices: () => Promise.resolve({ devices: [] }),
