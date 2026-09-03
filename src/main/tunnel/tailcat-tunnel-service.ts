@@ -15,7 +15,13 @@ export type TailcatTunnelServiceOptions = {
   userDataPath: string
   logf?: (message: string) => void
   resolveBinary?: () => string | null
+  probe?: (binary: string) => Promise<TailcatCompatibility>
+  now?: () => number
 }
+
+// Why: a failed probe must be retried so an in-place upgrade is picked up, but not on every status
+// poll; a successful probe holds for the life of the process.
+const FAILED_PROBE_RETRY_MS = 30_000
 
 const TAILCAT_STATE_DIRECTORY = 'tailcat'
 const SERVER_KEY_FILENAME = 'orca-server.private.json'
@@ -30,7 +36,7 @@ export class TailcatTunnelService implements RuntimeTunnelAdvertiser {
   private readonly stateDirectory: string
   private readonly resolveBinary: () => string | null
   private binaryPath: string | null | undefined
-  private compatibility: { binary: string; result: TailcatCompatibility } | null = null
+  private compatibility: { binary: string; result: TailcatCompatibility; at: number } | null = null
   private probing: Promise<TailcatCompatibility> | null = null
   private server: TailcatTunnelServer | null = null
   private proxy: TailcatSocksProxy | null = null
@@ -70,13 +76,18 @@ export class TailcatTunnelService implements RuntimeTunnelAdvertiser {
    * before 0.4 use a different command syntax that would only surface as supervisor restart loops.
    */
   private getCompatibility(binary: string): Promise<TailcatCompatibility> {
-    if (this.compatibility?.binary === binary) {
-      return Promise.resolve(this.compatibility.result)
+    const now = this.options.now ?? Date.now
+    const cached = this.compatibility
+    if (
+      cached?.binary === binary &&
+      (cached.result.ok || now() - cached.at < FAILED_PROBE_RETRY_MS)
+    ) {
+      return Promise.resolve(cached.result)
     }
     if (!this.probing) {
-      this.probing = probeTailcatBinary(binary)
+      this.probing = (this.options.probe ?? probeTailcatBinary)(binary)
         .then((result) => {
-          this.compatibility = { binary, result }
+          this.compatibility = { binary, result, at: now() }
           return result
         })
         .finally(() => {
